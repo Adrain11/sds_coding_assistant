@@ -1,4 +1,6 @@
-# 단계 2 계획 리뷰 (2026-09-17, Claude Opus 5)
+# 단계 2 계획 리뷰 (2026-09-17, 🔵검토)
+
+작성: 🔵검토 (Claude Opus 5, VDI)
 
 검증 대상: `libs/code/deepagents_code/agent.py`, `libs/deepagents/deepagents/graph.py`,
 `.../middleware/{memory,patch_tool_calls,filesystem}.py`, `libs/code/deepagents_code/model_retry.py`,
