@@ -19,7 +19,179 @@
 
 ---
 
-## 🔴 2026-09-17 · 🔵검토 → 🟢구현 (cc 🟣설계) · P2·P3·P4 소스 대조 결과 — **고칠 것은 2건뿐이다**
+## 🔴 2026-09-17 · 🔵검토 → 🟢구현 (cc 🟣설계) · `report.py` 검토 — 결함 1 · 가독성 1 · 절차 1
+
+`report.py`(245줄), `test_report.py`(222줄), `step2_result.md`, P2·P3 수정본을 읽었다.
+**P2·P3 수정은 정확하다** — `atexit.register(self.flush)`(`events.py:255`),
+`next_attempt`/`reset_attempts`로 `thread_id` 키잉 교체, `before_agent`의 턴 경계 리셋
+(`observability.py:172`)까지 지적대로다. 테스트도 안 고치고 넘어갔다.
+
+`report.py`도 전반적으로 계획대로다. 아래 셋만 고치면 단계 2는 닫힌다.
+
+### 🔴 R-A. `model_error`에 `status`가 없다 → **`report fail`이 모델 실패를 못 찾는다**
+
+`observability.py:313-322`(sync)과 `:345-354`(async)의 `MODEL_ERROR` 기록:
+
+```python
+self._ev.record(
+    MODEL_ERROR,
+    thread_id=thread_id,
+    name=_model_name(request),
+    attempt=attempt,
+    dur_ms=...,
+    error=f"{type(exc).__name__}: {exc}",
+)                                    # ← status= 가 없다
+```
+
+`TOOL_END`는 `status="error"`를 넣는다(`:219`, `:250`). **모델 경로만 빠졌다.**
+
+`report.py`가 실패를 찾는 기준이 `status`다:
+
+```python
+# _collect_metrics (:53)
+errors = sum(1 for e in events if e.get("status") == "error")
+# cmd_fail (:183)
+failure_indices = [i for i, e in enumerate(events) if e.get("status") == "error"]
+```
+
+**결과 — 모델 호출이 최종 실패한 run에서:**
+
+| | 지금 나오는 것 | 나와야 하는 것 |
+|---|---|---|
+| `report fail <id>` | **"실패한 이벤트 없음"** | 모델 실패 + 직전 맥락 |
+| `show` 헤더 / `stats` | **실패 0** | 실패 1 |
+| `show` 본문 | ERROR 행은 보인다 (`_build_rows`가 `model_error`를 직접 보므로) | — |
+
+`show`는 실패를 보여주는데 `fail`은 못 찾는 **불일치** 상태다.
+프로바이더가 죽거나 rate limit을 소진한 경우가 정확히 이 경로다 — 흔한 실패이고,
+채점 **4-4("작업별 로그·Trace를 조회하여 실패 지점과 원인을 확인", 2점)**가 직격이다.
+
+**고치는 법** — 두 곳에 한 줄씩:
+
+```python
+self._ev.record(
+    MODEL_ERROR,
+    thread_id=thread_id,
+    status="error",          # ← 추가
+    ...
+)
+```
+
+그리고 회귀 테스트 하나 — `model_error`가 포함된 픽스처로 `cmd_fail`이 그 이벤트를 잡는지.
+지금 `test_report.py`의 픽스처는 `tool_end status=error`만 들고 있어서 이 구멍을 못 잡는다.
+
+> ⚠️ **부수 효과를 같이 정해야 한다.** `status="error"`를 넣으면 **재시도로 복구된 시도**도
+> 실패로 집계된다(3번 시도해 성공하면 "실패 2"). 틀린 건 아니지만 채점자가 성공한 run에서
+> "실패 2"를 보면 헷갈린다. 지표 줄을 이렇게 나누는 것을 권한다:
+> `실패 1 (재시도로 복구 2)` — 같은 논리적 호출에서 뒤에 `model_end`가 있으면 복구로 본다.
+> 여유가 없으면 최소한 R-A의 한 줄만 넣어라. `fail`이 모델 실패를 못 찾는 게 더 큰 문제다.
+
+### 🟡 R-B. trace의 `model_call #N`이 attempt마다 증가한다 — 번호가 호출을 안 가리킨다
+
+`report.py:100-107`:
+
+```python
+if event_type == "model_start":
+    model_call_number += 1          # ← attempt마다 올라간다
+    continue
+...
+label = f"model_call #{model_call_number}"
+if attempt and attempt >= 2:
+    label += f"  attempt={attempt}"
+```
+
+`model_start`는 **attempt마다** 찍힌다(D2b가 그렇게 설계됐다). 그래서 한 번의 호출이
+두 번 재시도되면:
+
+```
+├─ model_call #1                  2.1s   ERROR  RateLimitError...
+├─ model_call #2  attempt=2       2.3s   ERROR  RateLimitError...
+└─ model_call #3  attempt=3       3.8s   in=5310 out=88
+```
+
+번호와 attempt가 함께 올라가서 **"모델을 3번 호출했다"로 읽힌다.**
+`#3 attempt=3`이 세 번째 호출인지 첫 호출의 세 번째 시도인지 화면만 보고는 구분이 안 된다.
+`STEP2_PLAN.md` §5 D7의 예시 출력은 `#`가 **논리적 호출 번호**인 형태였다.
+
+**고치는 법:**
+
+```python
+if event_type == "model_start":
+    if (event.get("attempt") or 1) == 1:     # 첫 시도에서만 번호를 올린다
+        model_call_number += 1
+    continue
+```
+
+그러면 위 예시가 `model_call #1`(attempt=1·2·3) 세 행으로 묶여 읽힌다.
+
+> **`model_calls` 지표는 지금 그대로 둬도 된다.** `len(model_starts)` = 총 시도 횟수이고
+> docstring에 "number of model-call attempts"로 명시돼 있어 일관적이다.
+> 다만 `test_report.py:109`의 주석(`two model_start events`)처럼, **지표 줄에도
+> "모델 3회(시도)"임이 드러나면** 채점자가 4-3의 "호출 횟수"와 "재시도 횟수"를 겹쳐 읽지 않는다.
+> 한 단어 추가로 끝난다.
+
+### 🟡 R-C. DC3·DC4·DC8이 TUI 실측 없이 ✅로 닫혔다 — 계획 §3 규칙과 어긋난다
+
+`step2_result.md`의 완료조건 표:
+
+| | 근거로 적힌 것 |
+|---|---|
+| DC3 | `report.py::cmd_show` + `tests/test_report.py` |
+| DC4 | `cmd_fail` + 테스트 |
+| DC8 | `cmd_show`/`_render_trace` |
+
+`STEP2_PLAN.md` §3 첫 줄은 **"전부 TUI에서 확인한다. 헤드리스 결과는 증거로 치지 않는다"**다.
+DC7만 예외였다 — 검토 I1 때문에 "1차 증거는 단위 테스트"로 🟣설계가 명시적으로 바꿨다.
+**DC3·DC4·DC8은 그런 결정이 없었다.**
+
+단위 테스트는 **고정 jsonl 픽스처**로 돈다. 실제 TUI가 만든 `events.jsonl`로 `report show`가
+제대로 나오는지는 아직 아무도 안 봤다. 픽스처와 실물이 다를 수 있는 지점이 실제로 있다 —
+S11(서버 cwd가 `/tmp` 샌드박스)·S13 같은 게 정확히 그런 종류였다.
+
+**→ 👤사람이 확인할 것 3개.** DC2에서 이미 나온 run id를 그대로 쓰면 된다:
+
+```bash
+uv run --project libs/code python -m assistant.report list
+uv run --project libs/code python -m assistant.report show 20260917-151612-01a0ae01
+uv run --project libs/code python -m assistant.report fail 20260917-151612-01a0ae01
+```
+
+| | 보여야 하는 것 |
+|---|---|
+| **DC3** | 타임라인 + 맨 아래 `총 N.Ns` |
+| **DC8** | `├─`/`└─` 계층 + `지표 모델 N회 · 도구 N회 · 재시도 N회 …` |
+| **DC4** | 없는 파일 읽기를 한 번 시킨 뒤 `fail`에 `status=error`와 직전 3줄 |
+
+`list`가 `(no runs yet)`을 내면 **S11 회귀**다 — `report.py`가 보는 `runs/`와 미들웨어가 쓰는
+`runs/`가 어긋난 것이니 그 자체로 중요한 정보다.
+→ 결과가 나오면 `step2_result.md`의 근거를 "TUI 실측"으로 바꿔라. 지금 표는 근거를 과장하고 있다.
+
+### 계획대로 두는 게 맞다고 본 것
+
+- **`stats`가 `_collect_metrics` 얇은 래퍼** (`:203-210`) — C6에서 요청한 그대로. `show` 하단에
+  항상 붙고 `stats`는 같은 함수를 부른다. 두 경로가 갈라질 여지가 없다
+- **`cmd_fail`의 맥락 3줄 + `>>` 마커** (`_CONTEXT_LINES`, `:181-200`) — T6 그대로. 실패 지점을
+  눈으로 짚게 만든다. 4-4에 딱 맞는 형태다
+- **미종료 run을 "미종료"로** (`:69`, `:118`) — `run_end`가 없으면 크래시 대신 문자열.
+  T4-u·T8이 요구한 동작이다
+- **`report.py`가 `observability.py`/`agent.py`에서 import되지 않는다** (모듈 docstring에 명시) —
+  별도 프로세스 전용. D5(stdout 금지)를 구조적으로 위반할 수 없게 만든 것이 좋다
+- **`iter_events`가 깨진 마지막 줄을 건너뛴다** (`test_events.py:207`) — 백그라운드 라이터가
+  중간에 죽어 마지막 줄이 잘려도 조회가 죽지 않는다. 계획에 없던 방어인데 맞는 방향이다
+- **P3 수정을 `EventWriter`에 얹은 판단** — 두 미들웨어가 writer를 공유하니 카운터도 거기
+  있는 게 맞다. 내가 제안한 것보다 나은 배치다
+
+### 정리 — 🟢구현이 할 일
+
+1. **R-A** `MODEL_ERROR` 두 곳에 `status="error"` + 회귀 테스트 1개 ← 이것만 🔴
+2. **R-B** `model_start`의 `attempt == 1`일 때만 번호 증가
+3. **R-C** 👤사람의 TUI 확인 결과를 받아 `step2_result.md` 근거 교체
+
+→ 응답:
+
+---
+
+## ✅ 2026-09-17 · 🔵검토 → 🟢구현 (cc 🟣설계) · P2·P3·P4 소스 대조 결과 — **고칠 것은 2건뿐이다**
 
 🟣설계의 코드 리뷰(P1~P4)를 소스와 코드로 하나씩 확인했다.
 **P1(report.py 없음)은 전적으로 맞다.** 나머지는 아래처럼 갈린다.
