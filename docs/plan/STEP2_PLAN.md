@@ -15,7 +15,7 @@ vendoring된 `libs/` 원본을 직접 읽고 확인한 것. **추정이 아니�
 | # | 사실 | 출처 |
 |---|---|---|
 | S1 | 미들웨어 조립 지점은 `create_cli_agent`의 `agent_middleware` 리스트 | `libs/code/deepagents_code/agent.py:3073` |
-| S2 | **리스트 앞쪽 = 바깥쪽** (`first = outermost`). `before_agent`는 리스트 순서, **`after_agent`는 역순** | `agent.py:3063`, `agent.py:3101` 주석 |
+| S2 | **dcode custom 리스트 *안에서* 앞쪽 = 바깥쪽** (`first = outermost`). 단 이 리스트 전체는 SDK core 5종(Skills→Filesystem→SubAgent→Summarization→PatchToolCalls) **뒤에** 통째로 삽입되므로, `agent_middleware[0]`도 그 다섯보다는 **안쪽**이다. `before_agent`는 리스트 순서, **`after_agent`는 역순** | `agent.py:3063-3066`, `agent.py:3101` / 삽입 구현 `graph.py:229-231`, core 목록 `graph.py:860-898` (🔵 검토 R1) |
 | S3 | `wrap_tool_call(self, request: ToolCallRequest, handler) -> ToolMessage \| Command` | `agent.py:960` (`ShellAllowListMiddleware` 실물) |
 | S4 | **`awrap_tool_call` 비동기 판이 따로 있고, 서버 그래프는 주로 async로 돈다** | `agent.py:979-983` 주석 + 시그니처 |
 | S5 | `wrap_model_call(self, request: ModelRequest, handler) -> ModelResponse` / `awrap_model_call` | `libs/deepagents/deepagents/middleware/memory.py:385, 402` |
@@ -46,6 +46,23 @@ uv run --project libs/code dcode -a coding-assistant   # 저장소 루트에서 
 > `project hooks.json /home/ubuntu/sds_coding_assistant/.deepagents/hooks.json` → 프로젝트 루트가 **저장소 루트**로 잡힘.
 > 위 커맨드를 README 실행 절차로 확정한다. (`project hooks.json (missing)`은 정상 — 훅 대신 미들웨어 배선으로 간다.)
 
+**F4. 모델 프로바이더가 선택 의존성(extra)이다 — AC1의 실제 걸림돌**
+09.17 실측: `uv sync --project libs/code` 후 TUI를 띄우면
+`MissingProviderPackageError: Missing package for provider 'openrouter'`로 **서버가 뜨지 않는다.**
+`libs/code/pyproject.toml:129`에서 `openrouter = ["langchain-openrouter>=0.2.8,<2.0.0"]`로 extra에 빠져 있기 때문.
+지금까지는 전역에 `uv tool install`로 깔아둔 dcode를 써서 안 보이던 문제다.
+
+→ 빌드 절차는 **extra를 반드시 포함**해야 한다:
+```bash
+uv sync --project libs/code --extra all-providers   # 채점자용 기본 (134행, 20개 프로바이더)
+uv sync --project libs/code --extra openrouter      # 가벼운 설치 (내 개발용)
+```
+→ TUI 안의 `/install openrouter`는 쓰지 않는다. vendoring한 editable 설치에서 어디로 깔리는지 불확실하고,
+채점자도 같은 곳에서 막힌다. 의존성은 `uv sync`로 명시적으로 고정한다.
+→ **README 기본 절차는 `all-providers`.** 채점자가 어떤 프로바이더를 쓸지 모르고, 여기서 막히면
+나머지 30점을 볼 기회 자체가 없어진다. 설치가 무거운 건 그 다음 문제다.
+→ DC1과 §7 리스크에 반영.
+
 **F3. 단계 1의 "이식"이 안 돼 있었다 — 2026.09.17 처리 완료**
 GitHub 저장소를 확인한 결과 커밋 1개(`baseline: dcode 0.1.69 source`)에 루트가 `.gitignore`와 `libs/`뿐이었다.
 PLAN.md 단계 1 표의 이식 대상(`.agents/skills/` 8종, `.claude/skills/`, `.env.example`, `SKILLS.md`,
@@ -53,6 +70,42 @@ PLAN.md 단계 1 표의 이식 대상(`.agents/skills/` 8종, `.claude/skills/`,
 → 09.17 오전에 `sds_final_project`에서 복사 완료. `readlink -e .claude/skills/*` = 13개 전부 해소 확인.
 → `.gitignore`에 `.claude/settings.local.json` 추가 (원본 저장소에는 있었는데 빠져 있었다 — 토큰 유출 예방).
 → `hooks/pep8_gate.py`는 로직만 단계 5에서 재사용하므로 복사하지 않는다.
+
+---
+
+## 0-B. 공식 제출 안내 (2026.09.17 수신) — 전 단계에 걸리는 제약
+
+| | 내용 | 영향 |
+|---|---|---|
+| **기한** | 2026.09.20(일) 23:59:59 | 단계 2~5를 압축하지 않아도 된다 |
+| **제출 형식** | **ZIP 파일**. GitHub 링크가 아니다 | 단계 5에 "ZIP 패키징" 작업 추가 |
+| **포함 범위** | "dcode를 실행하는데 필요한 **소스코드만**. `.claude/skills` 등 dcode 실행과 관련없는 것은 **금지**" | 🔴 아래 참조 |
+| 닉네임 | 성함 금지 | 제출 시 확인 |
+
+### 🔴 제출 ZIP에서 제외할 것
+
+09.17 오전에 `sds_final_project`에서 이식한 것 중 **개발 도구용 자산은 dcode가 읽지 않으므로 제출에서 뺀다.**
+저장소에는 그대로 둔다 — 개발에 필요하다. **빼는 것은 ZIP을 만드는 시점이다.**
+
+| 대상 | 저장소 | 제출 ZIP | 이유 |
+|---|---|---|---|
+| `.claude/` | 유지 | ❌ 제외 | 안내문이 명시적으로 금지 |
+| `.agents/skills/` | 유지 | ❌ 제외 | `.claude/skills/`가 심볼릭 링크로 가리키는 실체. 개발 도구용이고 dcode는 읽지 않는다 |
+| `CLAUDE.md` | 유지 | ❌ 제외 | Claude Code용 규칙 |
+| `docs/plan/` | 유지 | ✅ **포함** | 채점 2번(10점)의 문서 증거. 공식 문구가 "*내가* 계획을 세웠는가"로도 읽히므로 문서와 기능 **둘 다 대비한다**. 강사 확인 후 한쪽을 줄인다 (검토 G1) |
+| `.git/` | 유지 | ❌ 제외 | 커밋 author에 **실명·개인 이메일**이 남는다. 닉네임 규칙 위반 소지 (검토 G1) |
+| `SKILLS.md`, `skills-lock.json` | 유지 | ❌ 제외 | 위 두 스킬 디렉터리의 관리 문서 |
+| `.deepagents/` | 유지 | ✅ 포함 | dcode가 실제로 읽는 프로젝트 규칙·스킬 |
+| `assistant/`, `libs/`, `pyproject.toml`, `README.md`, `tests/` | 유지 | ✅ 포함 | 실행에 필요 |
+
+> ⚠️ **2-1·2-2는 문서와 기능 둘 다로 증명한다.**
+> 공식 문구 "Coding Assistant 의 개발 시작 전 작업 계획 구체화 및 리뷰"는 두 갈래로 읽힌다 —
+> (a) *내가* 개발 전에 계획했는가(→ 문서가 증거), (b) *Assistant가* 코드 수정 전에 계획하게 만들었는가
+> (→ 기능이 증거). 문법은 (a), 채점 방식("빌드→TUI→구현 여부 점검")은 (b)를 가리킨다.
+> **단정할 근거가 없으므로 둘 다 한다.** `docs/plan/`을 ZIP에 넣고,
+> **`.deepagents/skills/`에 계획 작성 절차 스킬**도 넣어 에이전트가 요구사항·범위·완료조건·수정대상·
+> 순서·테스트방법을 갖춘 계획을 만들도록 강제한다 (단계 3의 핵심).
+> 👤 **강사 확인 필요** — "계획·리뷰 문서를 ZIP에 포함해도 되나요?" 답이 오면 한쪽을 줄인다.
 
 ---
 
@@ -94,12 +147,14 @@ PLAN.md 단계 1 표의 이식 대상(`.agents/skills/` 8종, `.claude/skills/`,
 
 전부 **TUI에서** 확인한다. 헤드리스 결과는 증거로 치지 않는다 (PLAN.md 리스크 표).
 
-- [ ] **DC1** 깨끗한 셸에서 `uv run --project libs/code dcode -a coding-assistant`로 TUI가 뜨고, `dcode config path`가 **저장소 루트**를 가리킨다
+- [ ] **DC1** 깨끗한 셸에서 `uv sync --project libs/code --extra all-providers` → `uv run --project libs/code dcode -a coding-assistant`로 **TUI가 뜨고**(F4: extra 없으면 서버가 안 뜬다), `dcode config path`가 **저장소 루트**를 가리킨다
 - [ ] **DC2** TUI에서 파일 읽기 한 번 시키면 `runs/<run_id>/events.jsonl`이 생기고, `run_start` / `model_*` / `tool_*` / `run_end`가 전부 들어 있다
 - [ ] **DC3** `python -m assistant.report show <run_id>`가 그 요청의 타임라인과 **총 소요 시간**을 보여준다
 - [ ] **DC4** 일부러 실패시킨 도구 호출(없는 파일 읽기)이 `status=error`로 남고, `report fail <run_id>`로 **그 지점만** 뽑힌다
 - [ ] **DC5** 로그 디렉터리를 읽기 전용으로 만들어도 **TUI가 죽지 않는다** (로거는 fail-open — 아래 §5 D4)
 - [ ] **DC6** TUI 화면에 로거가 만든 출력이 **한 글자도 섞이지 않는다**
+- [ ] **DC7** 🔴 모델 호출이 재시도된 요청에서 `report`에 **attempt별 기록**이 남고 재시도 횟수가 1 이상으로 집계된다 (검토 R2 — 이게 없으면 4-3의 "재시도"가 증거 없음)
+- [ ] **DC8** `report show`가 **계층형 trace 뷰**로 나온다 (4-4의 "Trace" 문구 충족, 검토 G5)
 
 ## 4. 수정·생성 대상 파일과 작업 순서 (2-2)
 
@@ -111,16 +166,24 @@ PLAN.md 단계 1 표의 이식 대상(`.agents/skills/` 8종, `.claude/skills/`,
 | 2 | `assistant/__init__.py`, `assistant/pyproject.toml` | 신규 | 빈 패키지 | 10분 |
 | 3 | `libs/code/pyproject.toml` | 수정 | `dependencies`에 `"assistant"` 1줄 + `[tool.uv.sources]`에 `assistant = { path = "../../assistant", editable = true }` 1줄 | 10분 |
 | 4 | — | 확인만 | `uv run --project libs/code python -c "import assistant"` 통과 | 10분 |
-| 5 | `assistant/events.py` | 신규 | `EventWriter` — run_id 발급, jsonl append, 민감정보 절삭 | 45분 |
+| 5 | `assistant/events.py` | 신규 | `EventWriter` — run_id 발급, jsonl append, 민감정보 절삭, **이벤트 타입 상수 전체(D7)** | 45분 |
 | 6 | `tests/test_events.py` | 신규 | 동시 쓰기·절삭·미종료 run 단위 테스트 | 30분 |
-| 7 | `assistant/observability.py` | 신규 | `EventLoggerMiddleware` — 6개 훅 (sync 3 + async 3) | 60분 |
-| 8 | `libs/code/deepagents_code/agent.py` | **수정 (1곳)** | `agent_middleware` 리스트 **맨 앞**에 `EventLoggerMiddleware()` 삽입 (S2: 바깥쪽) | 10분 |
+| 7 | `assistant/observability.py` | 신규 | `EventLoggerMiddleware`(바깥) + **`EventLoggerInnerMiddleware`(안쪽, D2b)**. 각각 sync/async 훅 | 75분 |
+| 8 | `libs/code/deepagents_code/agent.py` | **수정 (2곳)** | ① `agent_middleware` **맨 앞**에 `EventLoggerMiddleware()` ② `create_deep_agent` 직전 **맨 끝**에 `EventLoggerInnerMiddleware()` — 같은 `EventWriter` 공유 | 15분 |
 | 9 | — | 확인만 | **T3 실측** — 도구 호출이 실제로 잡히는지. 여기서 갈린다 | 20분 |
-| 10 | `assistant/report.py` | 신규 | `list` / `show` / `fail` / `stats` | 60분 |
+| 10 | `assistant/report.py` | 신규 | `list` / `show`(계층형 trace + 하단 지표) / `fail` / `stats`(지표 함수 래퍼) | 75분 |
 | 11 | `tests/test_report.py` | 신규 | 고정 jsonl 픽스처로 출력 검증 | 20분 |
-| 12 | `05_프로젝트/step2_result.md` | 신규 | 결과 기록 (실패 포함) | 20분 |
+| 12 | `docs/plan/step2_result.md` | 신규 | 결과 기록 (실패 포함) | 20분 |
 
-**8번이 dcode 원본을 건드리는 유일한 곳.** import 1줄 + insert 1줄. 그 이상 늘어나면 설계가 틀린 것이다.
+> ⚠️ **2~6번은 리뷰 반영 전에 이미 실행됐다 (2026.09.17).** 저장소에 `assistant/__init__.py`,
+> `assistant/events.py`, `assistant/pyproject.toml`, `tests/test_events.py`가 있고
+> `libs/code/pyproject.toml:33, 215`에 배선이 들어가 있다.
+> **리뷰 대기 중 저위험 배선 작업(패키지 뼈대 · 의존성 1줄)을 선행했고, 로직 구현은 리뷰 반영 후 착수한다.**
+> 숨기지 않고 남긴다 — 채점 2-4는 순서를 지켰는지를 보는 항목이고, 어긋난 것을 기록하는 편이
+> 커밋 타임스탬프와 모순되지 않는다. (검토 R3)
+> **5번의 `events.py`는 D7의 새 타입과 D2b 때문에 다시 손봐야 한다.**
+
+**8번이 dcode 원본을 건드리는 유일한 곳.** 각각 import 1줄 + insert 1줄, 총 2곳. 그 이상 늘어나면 설계가 틀린 것이다.
 
 ## 5. 설계 결정과 근거
 
@@ -128,8 +191,30 @@ PLAN.md 단계 1 표의 이식 대상(`.agents/skills/` 8종, `.claude/skills/`,
 `before_agent`에서 run 시작, `after_agent`에서 종료. 4-1의 "전체 실행 흐름"이 요청 단위로 깔끔하고, 4-4의 "실패 지점"도 요청 단위로 짚힌다. 출력은 `runs/<run_id>/events.jsonl`.
 `run_id` = `{시각 YYYYMMDD-HHMMSS}-{thread_id 앞 8자}`. thread_id를 못 구하면 랜덤 8자로 떨어진다(죽지 않는다).
 
-**D2. 리스트 맨 앞에 삽입 = 가장 바깥**
-S2에 따라 앞쪽일수록 바깥. 바깥에 있어야 **다른 미들웨어가 차단한 도구 호출도 우리 로그에 잡힌다** — 단계 3의 계획 게이트 차단을 기록하려면 이게 필수다. `before_agent`는 제일 먼저, `after_agent`는 역순이라 제일 나중에 불린다. run 경계로 딱 맞다.
+**D2. 바깥 로거 — `agent_middleware` 맨 앞**
+custom 리스트 안에서 앞쪽일수록 바깥(S2). `ShellAllowList`·`AutoModeHITL`·`ServerHooks`가 모두 이 리스트의 뒤쪽이므로, **다른 미들웨어가 차단한 도구 호출도 우리 로그에 잡힌다** — 단계 3의 계획 게이트 차단을 기록하려면 이게 필수다. `before_agent`는 제일 먼저, `after_agent`는 역순이라 제일 나중에 불린다. run 경계로 딱 맞다.
+(SDK core 5종보다는 안쪽이지만, 우리가 기록할 대상은 전부 custom 리스트 안에 있으므로 목적은 달성된다.)
+
+**D2b. 안쪽 로거 — `agent_middleware` 맨 끝** 🔴 *2026.09.17 추가 (검토 R2)*
+
+바깥 로거만으로는 **재시도 횟수가 항상 0으로 나온다.** `CodeModelRetryMiddleware`의 재시도는
+그 미들웨어 **내부 루프**(`model_retry.py:633, 685`의 `for attempt in range(max_retries + 1)`)이고,
+이 미들웨어는 `agent.py:3552` 근처에서 리스트 뒤쪽에 append된다.
+바깥에 있는 로거의 `wrap_model_call`은 재시도 5회를 `model_start`/`model_end` **한 쌍**으로만 본다.
+채점 **4-3이 "재시도 횟수"를 명시**하므로 이대로면 그 지표의 증거가 구조적으로 안 나온다.
+
+→ 이름이 다른 얇은 두 번째 미들웨어 `EventLoggerInnerMiddleware`를 `create_deep_agent` 호출 직전
+`agent_middleware` **맨 끝**에 append하고, 바깥 로거와 **같은 `EventWriter` 인스턴스를 공유**한다.
+맨 끝 = `CodeModelRetry`보다 안쪽이므로 attempt마다 `wrap_model_call`이 불린다.
+
+| | 담당 |
+|---|---|
+| 바깥 `EventLoggerMiddleware` | `run_start`/`run_end`, `tool_*`, `code_changed`, (단계 3) `gate_block` |
+| 안쪽 `EventLoggerInnerMiddleware` | `model_start`/`model_end`/`model_error` — **attempt 단위**. `attempt` 필드 포함 |
+
+> **"배선은 한 곳" 원칙과 부딪히는 것에 대해** — 원칙을 굽힌다. 그 원칙의 목적은 남의 소스를
+> 최소한만 건드려 되돌리기 쉽게 하는 것이지 숫자 1을 지키는 게 아니다. 두 곳 모두
+> `import 1줄 + insert 1줄`이라 목적은 그대로다. **원칙이 채점 항목과 충돌하면 채점 항목이 이긴다.**
 
 **D3. sync·async 6개 훅을 전부 구현한다**
 S4가 핵심이다. 서버 그래프는 async로 돈다. `wrap_tool_call`만 만들고 `awrap_tool_call`을 빼면 **TUI에서 로그가 한 줄도 안 남는다.** 판정 로직은 `_record()` 하나에 모으고 sync/async 래퍼는 얇게 감싼다 (S3의 `ShellAllowListMiddleware`가 쓰는 구조 그대로).
@@ -144,6 +229,11 @@ TUI는 Textual 앱이다. `print()` 한 줄이 화면을 깨뜨린다. `EventWri
 
 **D6. 민감정보 절삭**
 도구 인자에 `.env` 내용·API 키가 들어올 수 있다. 저장 규칙: 문자열 값은 **앞 200자까지만**, 그 뒤는 `…(+N chars)`. `content`·`command`처럼 큰 필드는 길이와 SHA-256 앞 8자만. 키 이름이 `key|token|secret|password`에 매칭되면 값 전체를 `***`. 저장소를 제출하므로 `runs/`는 `.gitignore`에 이미 들어 있다 ✓.
+
+> 🔴 **예외 (검토 C4)** — `status=error` 이벤트는 한도를 **1000자**로 올린다.
+> 실패 원인이 인자 뒷부분(긴 경로 끝, 명령 뒷단)에 있으면 200자 절삭 때문에 `report fail`로 봐도
+> 원인이 안 보인다. **4-4는 "실패 지점과 원인을 확인"이 요구사항**이라 절삭이 채점과 정면으로 부딪힌다.
+> 키 마스킹(`***`)은 한도와 무관하게 항상 적용한다.
 
 **D7. 이벤트 스키마 — 한 줄에 하나**
 ```json
@@ -162,7 +252,48 @@ TUI는 Textual 앱이다. `print()` 한 줄이 화면을 깨뜨린다. `EventWri
 | `gate_block` | **단계 3 예약** | 차단 사유, 요구한 도구 |
 | `memory_hit` / `improve_*` | **단계 4 예약** | — |
 
-예약 타입은 지금 `events.py`의 상수로만 선언해둔다. 단계 3·4에서 `report.py`를 안 고치고 바로 쓰기 위해서다.
+**🔴 2026.09.17 추가 — 공식 평가 가이드라인 반영**
+4-1의 공식 문구는 "요청별로 **계획·리뷰·코드 변경·테스트·최종 결과**의 전체 실행 흐름 기록 [3]"이다.
+위 타입만으로는 로그에 **계획·리뷰·테스트가 이름으로 드러나지 않는다.** 채점자가 로그를 열었을 때
+저 다섯 단계가 보여야 3점이 온전하다. 다음 타입을 **단계 2에서 함께 예약**한다:
+
+| type | 채우는 단계 | 담는 것 |
+|---|---|---|
+| `plan_created` | 단계 3 | 계획 id, 대상 파일 목록, 완료조건 |
+| `plan_reviewed` | 단계 3 | 리뷰어(서브에이전트) 의견 요약, 반영 여부 |
+| `plan_approved` | 단계 3 | 승인 시각, 승인된 파일 목록 |
+| `code_changed` | 단계 2에서 바로 | 변경된 파일 경로, 도구명, 라인 증감 (`tool_end`에서 파생) |
+| `test_run` | 단계 5 | 명령, 통과/실패 수, 소요 |
+| `run_result` | 단계 2에서 바로 | 최종 결과 요약 (`run_end`와 함께) |
+
+`code_changed`와 `run_result`는 **단계 2에서 실제로 기록한다** — 쓰기 도구(`write_file`/`edit_file`/`execute`)의
+`tool_end`에서 파생하면 되므로 추가 비용이 거의 없고, 4-1의 "코드 변경"과 "최종 결과"가 바로 채워진다.
+나머지는 상수만 선언해둔다.
+
+`report.py show`는 타임라인을 **계획 → 리뷰 → 승인 → 코드 변경 → 테스트 → 결과** 순서의 구획으로
+보여준다. 아직 안 채워진 구획은 `— (단계 N에서 구현)`으로 표시한다. 채점자가 화면 하나로
+4-1의 다섯 항목을 확인할 수 있게 하는 것이 목적이다.
+
+**출력은 평면 목록이 아니라 계층형 trace 뷰로 한다** (4-4의 "로그·**Trace**를 조회" 문구, 검토 G5).
+들여쓰기 한 단계만 있어도 Trace로 읽힌다 — 비용 대비 효과가 가장 큰 구간이다:
+
+```
+run 20260917-091233-a1b2c3d4   (12.4s, 실패 1)
+├─ model_call #1          2.1s   in=4820 out=132
+├─ tool  read_file        0.1s   ok
+├─ model_call #2          3.8s   in=5310 out=88   attempt=2/3
+└─ tool  write_file       0.1s   ERROR  blocked by PEP8 gate: I001, F401
+
+지표  모델 3회 · 도구 2회 · 재시도 1회 · 총 12.4s · 토큰 in 10130 / out 220
+```
+
+하단 지표는 `_collect_metrics(run)` 하나로 계산하고 **`show`에 항상 붙인다** — 채점자가
+`stats` 서브커맨드를 따로 찾아 들어가지 않기 때문이다 (검토 C6). `stats`는 같은 함수를 부르는
+얇은 래퍼로 남긴다.
+
+> **결과 길이에 대한 주의 (검토 C5)** — `FilesystemMiddleware.wrap_tool_call`(`filesystem.py:3605-3628`)이
+> 큰 도구 결과를 파일로 evict하는데 이건 우리보다 바깥이다. 우리가 기록하는 결과 길이는
+> **eviction 전** 값이다. 의도된 동작이며, 스키마 주석에 한 줄 남긴다.
 
 **D8. `assistant/`는 저장소 루트, editable path 의존으로 설치**
 S9 때문에 그냥 두면 설치가 안 된다. `[tool.uv.sources]`에 editable path로 얹으면 S8의 `deepagents`와 **같은 방식**이라 채점자 환경에서도 동일하게 동작한다. 내 코드가 vendoring된 원본 트리 안에 섞이지 않아서 "채점자가 읽을 코드"가 `assistant/` 하나로 분명해진다.
@@ -186,17 +317,21 @@ S9 때문에 그냥 두면 설치가 안 된다. `[tool.uv.sources]`에 editable
 | **T6** | TUI에서 "없는파일.txt 읽어줘" → `report fail <run_id>` | `status=error` 이벤트와 직전 3개 맥락만 출력 (DC4) |
 | **T7** | TUI에서 PEP8 위반 코드 `write_file` 요청 | 차단이 `tool_end status=error`로 기록됨 (단계 3 대비 예행) |
 | **T8** | 요청 중 Ctrl+C → `report list` | 해당 run이 "미종료"로 표시, 크래시 없음 |
-| **T9** | `chmod 500 runs/` 후 TUI에서 아무 작업 | **TUI 정상 동작**, 로그만 안 남음 (DC5) |
+| **T9** | ① `chmod 500 runs/` ② **`runs/`를 지우고 저장소 루트를 읽기전용으로** 만든 뒤 TUI 작업 | 둘 다 **TUI 정상 동작**, 로그만 안 남음 (DC5). ②가 진짜 실패 경로다 — `before_agent`가 처음 하는 일이 `runs/<run_id>/` **생성**이라, 디렉터리를 만들 수 없는 경우가 fail-open이 깨지는 지점이다 (검토 C3) |
 | **T10** | 위 전 과정 동안 화면 | 로거 출력 섞임 없음 (DC6) |
+| **T11** | 🔴 재시도를 유발한다 — 잘못된 모델명이나 일시적으로 끊긴 키로 1회 실패시킨 뒤 `report show` | `attempt=2/3` 같은 표기가 나오고 지표에 **재시도 1회 이상** 집계 (DC7, 검토 R2) |
+| **T12** | `report show <run_id>` 출력 형태 | 계층형 trace + 하단 지표 (DC8) |
 
 ## 7. 리스크
 
 | 리스크 | 왜 | 대응 |
 |---|---|---|
-| ⚠️⚠️ **서브에이전트 내부가 안 보인다** | `_subagent_cli_middleware`는 별도 스택 (`agent.py:3023`). 우리 미들웨어는 메인에만 있음 | 메인에서는 `task` 도구 호출 1건으로 보인다. **README에 이 경계를 명시.** 단계 3·4에서 필요해지면 서브에이전트 스택에도 같은 인스턴스를 넣는다 (agent.py 2888 라인 근처, 배선 1줄 추가) |
-| ⚠️ **`before_agent`에서 thread_id를 못 구함** | 베이스 시그니처가 2인자(S6)라 `config`가 안 들어옴. `memory.py`는 3인자로 받지만 타입 무시 주석이 붙어 있음 | `langgraph.config.get_config()`를 `try/except`로 시도, 실패하면 랜덤 id. **작업 7번의 첫 30분에 실측** |
+| ⚠️⚠️ **서브에이전트 내부가 안 보인다** | GP 서브에이전트는 fork 모드로 부모 미들웨어를 상속하지만, `graph.py:822`의 `_gp_inheritable = [m for m in middleware if m.name in _gp_original_name_to_index]`가 **GP 기본 슬롯과 이름이 겹치는 것만** 상속한다. 새 이름인 `EventLoggerMiddleware`는 안 넘어간다 (검토 C2 — `agent.py:3055-3057`만 보면 반대로 읽히니 주의) | 메인에서는 `task` 도구 호출 1건으로 보인다. **README에 이 경계를 명시.** 필요해지면 이름을 슬롯에 맞추는 꼼수 말고 `_subagent_cli_middleware`(`agent.py:2885`)에 직접 배선 |
+| ⚠️ **`before_agent`에서 thread_id를 못 구함** | 베이스 시그니처가 2인자(S6) | **1순위로 `memory.py:279`의 3인자 선례를 그대로 따라 해본다** — `def before_agent(self, state, runtime, config: RunnableConfig)` + `# ty: ignore[invalid-method-override]`. 타입체커만 불평하고 런타임은 config를 준다는 뜻이다. S6은 베이스 시그니처일 뿐 상한이 아니다 (검토 C1). 실패하면 `langgraph.config.get_config()`, 그것도 실패하면 랜덤 id |
+| ⚠️ **패키지명 `assistant`가 PyPI에 이미 있을 수 있음** | `[tool.uv.sources]`는 **uv 전용**. 채점자가 `pip install -e libs/code`로 가면 PyPI에서 `assistant`를 찾아 남의 패키지가 깔린다. AC1 직결 (검토 R4) | `curl -s -o /dev/null -w "%{http_code}" https://pypi.org/pypi/assistant/json`로 확인. `200`이면 배포명을 `sds-assistant`로(import 이름 `assistant`는 유지). 어느 쪽이든 **README에 `uv` 사용을 명시** |
 | ⚠️ **`after_agent`가 HITL 인터럽트에서 안 불림** | 승인 대기로 그래프가 멈추면 run이 안 닫힘 | `run_end` 없는 run을 `report`가 정상 처리 (T4-u, T8). 다음 `run_start` 때 이전 run을 `interrupted`로 마감 |
 | ⚠️ **`libs/libs/` 정리하다 `uv sync`를 깨뜨림** | S8의 상대경로 의존 | 삭제 직후 `uv sync` + `dcode --version` 재확인 (작업 0번) |
+| ⚠️⚠️ **채점자가 빌드 단계에서 막힌다** | F4 — 프로바이더 extra 없이 `uv sync`하면 TUI가 안 뜬다. 여기서 막히면 나머지 30점이 채점 자체가 안 된다 | README 기본 절차를 `--extra all-providers`로. 깨끗한 디렉터리 clone→빌드→실행을 단계 5에서 반드시 재현 |
 | ⚠️ **내 PC ≠ 채점자 PC (재확인)** | 09.17 `dcode config path`가 전역 `~/.deepagents/config.toml (ok)`, `hooks trust (ok)`, `auth.json (ok)`를 보여줌. 승인 모드 `auto`와 훅 신뢰가 **내 전역 상태에만** 있다 | 게이트·로거를 승인 모드와 무관하게 설계(D2·D4). README에 채점자가 자기 모델 키를 넣는 절차(`dcode auth` 또는 환경변수)를 명시 |
 | 이벤트 파일이 커짐 | 큰 도구 결과 | D6 절삭으로 한 이벤트 상한을 둔다 |
 
