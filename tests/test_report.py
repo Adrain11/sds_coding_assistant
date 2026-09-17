@@ -140,6 +140,36 @@ def test_cmd_show_renders_trace_and_metrics_footer(tmp_path: Path, capsys) -> No
     assert "지표" in out
     assert "재시도 1회" in out
     assert "토큰 in 100 / out 10" in out
+    assert "모델 2회(시도)" in out
+
+
+def test_cmd_show_numbers_logical_calls_not_attempts(tmp_path: Path, capsys) -> None:
+    """검토 R-B regression: a retried call must keep one `#N`, and a
+    genuinely separate later call must get the next number — not one per
+    `model_start` (D2b fires one of those per *attempt*, not per call).
+    """
+    events = [
+        *FIXTURE_EVENTS[:5],  # run_start .. the retried call's model_end (attempts 1-2)
+        {"ts": "...", "run_id": RUN_ID, "seq": 11, "type": "model_start", "name": "m1", "attempt": 1},
+        {
+            "ts": "...",
+            "run_id": RUN_ID,
+            "seq": 12,
+            "type": "model_end",
+            "name": "m1",
+            "status": "success",
+            "attempt": 1,
+            "dur_ms": 50.0,
+            "data": {"input_tokens": 20, "output_tokens": 3, "requested_tools": []},
+        },
+    ]
+    _write_fixture(tmp_path, events=events)
+    cmd_show(RUN_ID, tmp_path)
+    out = capsys.readouterr().out
+
+    assert "model_call #1" in out  # the retried call (attempts 1-2)
+    assert "model_call #2" in out  # the separate, later call
+    assert "model_call #3" not in out
 
 
 def test_cmd_show_missing_run_returns_error(tmp_path: Path, capsys) -> None:

@@ -67,8 +67,11 @@ def _collect_metrics(events: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _format_metrics_line(metrics: dict[str, Any]) -> str:
     total_s = f"{metrics['total_dur_ms'] / 1000:.1f}s" if metrics["total_dur_ms"] is not None else "미종료"
+    # "모델 N회(시도)" — `model_calls` counts attempts, not logical calls
+    # (검토 R-B): spelling that out here keeps it from being misread as
+    # 4-3's separate "재시도 횟수" figure right next to it.
     return (
-        f"지표  모델 {metrics['model_calls']}회 · 도구 {metrics['tool_calls']}회 · "
+        f"지표  모델 {metrics['model_calls']}회(시도) · 도구 {metrics['tool_calls']}회 · "
         f"재시도 {metrics['retries']}회 · 총 {total_s} · "
         f"토큰 in {metrics['input_tokens']} / out {metrics['output_tokens']}"
     )
@@ -93,13 +96,21 @@ def _build_rows(events: list[dict[str, Any]]) -> list[_Row]:
     `tool_start`+`tool_end` become one `tool <name>` row. Rows appear in the
     order their *closing* event was recorded, matching how the events were
     actually observed to complete.
+
+    `#N` numbers *logical* calls, not attempts (검토 R-B): `model_start`
+    fires once per retry attempt (D2b), so incrementing on every one of
+    them made a single retried call read as several distinct calls
+    (`#1`, `#2 attempt=2`, `#3 attempt=3`). Only the first attempt of a
+    call advances the counter; later attempts keep its number and add
+    `attempt=N`, matching `STEP2_PLAN.md` §5 D7's example output.
     """
     rows: list[_Row] = []
     model_call_number = 0
     for event in events:
         event_type = event["type"]
         if event_type == "model_start":
-            model_call_number += 1
+            if (event.get("attempt") or 1) == 1:
+                model_call_number += 1
             continue
         if event_type in ("model_end", "model_error"):
             attempt = event.get("attempt")
