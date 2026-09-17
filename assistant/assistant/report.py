@@ -21,7 +21,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from assistant.events import iter_events, resolve_project_dir
+from assistant.events import (
+    CODE_CHANGED,
+    GATE_BLOCK,
+    PLAN_APPROVED,
+    PLAN_CREATED,
+    PLAN_REVIEWED,
+    iter_events,
+    resolve_project_dir,
+)
 
 _CONTEXT_LINES = 3
 """How many preceding events `fail` shows before each failure (T6)."""
@@ -40,6 +48,7 @@ def _collect_metrics(events: list[dict[str, Any]]) -> dict[str, Any]:
         retries: number of attempts beyond the first for any model call
             (D2b's `attempt` field; `attempt=2` already means one retry).
         errors: number of `status="error"` events.
+        blocks: number of `gate_block` events (Step 3 — 2-4/4-2 evidence).
         total_dur_ms: the run's own `run_end.dur_ms`, or `None` if the run
             never closed (T4-u/T8 — "미종료", not a crash).
         input_tokens / output_tokens: summed across `model_end` events.
@@ -51,6 +60,7 @@ def _collect_metrics(events: list[dict[str, Any]]) -> dict[str, Any]:
 
     retries = sum(1 for e in model_starts if (e.get("attempt") or 1) >= 2)
     errors = sum(1 for e in events if e.get("status") == "error")
+    blocks = sum(1 for e in events if e["type"] == GATE_BLOCK)
     input_tokens = sum((e.get("data") or {}).get("input_tokens") or 0 for e in model_ends)
     output_tokens = sum((e.get("data") or {}).get("output_tokens") or 0 for e in model_ends)
 
@@ -59,6 +69,7 @@ def _collect_metrics(events: list[dict[str, Any]]) -> dict[str, Any]:
         "tool_calls": len(tool_ends),
         "retries": retries,
         "errors": errors,
+        "blocks": blocks,
         "total_dur_ms": run_end.get("dur_ms") if run_end is not None else None,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
@@ -72,7 +83,7 @@ def _format_metrics_line(metrics: dict[str, Any]) -> str:
     # 4-3's separate "재시도 횟수" figure right next to it.
     return (
         f"지표  모델 {metrics['model_calls']}회(시도) · 도구 {metrics['tool_calls']}회 · "
-        f"재시도 {metrics['retries']}회 · 총 {total_s} · "
+        f"재시도 {metrics['retries']}회 · 차단 {metrics['blocks']}회 · 총 {total_s} · "
         f"토큰 in {metrics['input_tokens']} / out {metrics['output_tokens']}"
     )
 
@@ -130,7 +141,30 @@ def _build_rows(events: list[dict[str, Any]]) -> list[_Row]:
             is_error = event.get("status") == "error"
             detail = event.get("error", "") if is_error else "ok"
             rows.append(_Row(f"tool  {name}", event.get("dur_ms"), detail, is_error=is_error))
+        elif event_type in (PLAN_CREATED, PLAN_REVIEWED, PLAN_APPROVED, CODE_CHANGED):
+            rows.append(_Row(*_plan_lifecycle_row(event_type, event), is_error=False))
+        elif event_type == GATE_BLOCK:
+            data = event.get("data") or {}
+            rows.append(
+                _Row(f"gate_block  {event.get('name', '?')}", None, data.get("reason", ""), is_error=True)
+            )
     return rows
+
+
+def _plan_lifecycle_row(event_type: str, event: dict[str, Any]) -> tuple[str, float | None, str]:
+    """Build the (label, dur_ms, detail) triple for one plan-lifecycle event
+    (Step 3, DC9/EC9 — `plan_created`/`plan_reviewed`/`plan_approved`/
+    `code_changed` each get their own single-line row, in file order)."""
+    data = event.get("data") or {}
+    plan_id = data.get("plan_id")
+    if event_type == PLAN_CREATED:
+        return f"plan   created  {event.get('name', '?')}", None, plan_id or "-"
+    if event_type == PLAN_REVIEWED:
+        return f"plan   reviewed {event.get('name', '?')}", None, plan_id or "-"
+    if event_type == PLAN_APPROVED:
+        return f"plan   approved {event.get('name', '?')}", None, plan_id or "-"
+    # CODE_CHANGED
+    return f"code_changed  {event.get('name', '?')}", event.get("dur_ms"), "-"
 
 
 def _render_trace(run_id: str, events: list[dict[str, Any]], metrics: dict[str, Any]) -> str:

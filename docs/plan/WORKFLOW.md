@@ -16,36 +16,26 @@
 | 0 — TUI 첫 확인 | ✅ 완료 (09.16) | `docs/plan/step0_tui_result.md` |
 | 1 — 소스 vendoring + 빌드 | ✅ 완료 (09.17) | `libs/`, 빌드 통과 (`--extra openrouter`) |
 | 1-a — 이식 (skills·설정) | ✅ 완료 (09.17) | `.agents/`, `.claude/`, `.deepagents/`, `SKILLS.md` |
-| 2 — 이벤트 로거 | ✅ **완료 (09.17)** — DC1~DC8 전부 통과 | 계획 `STEP2_PLAN.md` · 리뷰 `STEP2_REVIEW.md`·`SUBMISSION_GAP.md` · 반영 `STEP2_REVIEW_RESPONSE.md` · 코드 `assistant/assistant/{events,observability,report}.py` · 결과 `step2_result.md` |
-| **3 — 계획 게이트** | 🔵 **진행 중** — 계획·리뷰·반영 완료, **구현 미착수** | 계획 `STEP3_PLAN.md` · 리뷰 `STEP3_REVIEW.md`(R1~R6) · 반영 `STEP3_REVIEW_RESPONSE.md`(6건 전부 채택) |
+| **2 — 이벤트 로거** | 🔵 **진행 중** | 계획 `STEP2_PLAN.md` · 리뷰 `STEP2_REVIEW.md`·`submission_gap.md` 완료 · 반영 `STEP2_REVIEW_RESPONSE.md` · 구현 중 |
+| 3 — 계획 게이트 | ⬜ 계획 미작성 | — |
 | 4 — 메모리·자기개선 | ⬜ 계획 미작성 | — |
 | 5 — PEP8 + README + 최종 | ⬜ 계획 미작성 | — |
 
-**단계 2 완료조건 — DC1~DC8 전부 통과** (09.17, `step2_result.md` 참조)
+**단계 2 완료조건 현황** (09.17 TUI 실측, INBOX 참조)
 
-| | 근거 |
+| ✅ 통과 | ⏳ `report.py` 대기 |
 |---|---|
-| DC1 · DC2 · DC5(①②) · DC6 | TUI 실측 (👤사람) |
-| DC3 · DC4 · DC8 | TUI가 만든 실제 run에 `report show`/`fail` 실행 (👤사람, 검토 R-C) |
-| DC7 | 단위 테스트 `test_retry_logging_produces_one_pair_per_attempt` (실물 `CodeModelRetryMiddleware` 스택) |
-
-구현 중 실측으로 찾은 것 — S11(서버 cwd가 `/tmp` 샌드박스) · S12(`ContextVar`가 훅 사이에 안 이어짐) ·
-S13(이벤트 루프에서 동기 I/O 차단) · `model_error`에 `status` 누락(R-A) · `tool_end`에 에러 본문 누락.
-**전부 실행해보지 않으면 못 찾는 것들이다.**
+| DC1 프로젝트 루트 · DC2 이벤트 흐름 · DC5 fail-open(①②) · DC6 화면 오염 없음 | DC3 타임라인 · DC4 실패 지점 · DC7 재시도 지표 · DC8 계층형 trace |
 
 **지금 열려 있는 것**
-- 🟢 구현: **단계 3 구현 미착수.** `STEP3_PLAN.md` §8 착수 전 확인부터 —
-  S14(미들웨어가 도구를 제공할 수 있는지)가 이 단계 설계의 전제이고, 안 되면 D3-b(범위 변경)다
-  - ⚠️ **09.17 현재 🟢구현의 토큰이 소진됐다.** 재개 방법이 정해지기 전까지 단계 3이 멈춘다
-- 🟣 설계: 단계 4 계획 착수 가능 · `PLAN.md` 단계 5의 X3 반영(🔵검토가 대행함) 확인
-- 👤 사람: 강사 확인 — `docs/`를 ZIP에 포함해도 되는지 (검토 G1)
-- ✅ 닫힘: PyPI `assistant` 이름 확인(검토 R4 → 실재. 배포명을 `sds-assistant`로 변경 완료)
+- 🟢 구현: **P2(flush/atexit) · P3(`id(request)` 제거) → `report.py`(P1) → `step2_result.md`.** README 검토 N1·N2도
+- 🟣 설계: 단계 3 계획 착수
+- 👤 사람: PyPI `assistant` 이름 확인 (검토 R4), 강사 확인 — `docs/`를 ZIP에 포함해도 되는지 (검토 G1)
 
 **📌 단계 5로 이월 (README 검토 09.17, INBOX 참조)**
 
 | | 무엇 | 왜 |
 |---|---|---|
-| N2 | ~~4절 `dcode config path` 확인 문구가 사실과 다름~~ **✅ 09.17 반영** (`dff7088`) | 대부분이 전역 경로다. `project hooks.json` 줄만 확인하도록 고치고 실제 출력 예시를 붙였다 |
 | N1 | **`docs/evaluation-mapping.md`** — 채점 16개 세부항목 ↔ 확인 방법 매핑. README 6절을 채점 항목 번호로 재구성 | 기능을 다 만들어도 채점자가 못 찾으면 0점. **점수 대비 가장 싼 작업** |
 | N8 | README 용어를 "저장소 루트" → **"압축을 푼 폴더의 최상위"**로 통일 | 제출이 ZIP이고 `.git/`은 제외한다 (`submission_gap.md` G1) |
 | N9 | 6절 "항목 2"에 **"YOLO 모드에서도 차단된다"** 테스트 케이스 | 채점 2-4의 가장 강한 증거 (`step0_tui_result.md` ③) |

@@ -3,5 +3,6 @@ __pycache__/
 *.pyc
 .env
 runs/
+.deepagents/plans/
 .claude/settings.local.json
 *.egg-info/

@@ -3072,10 +3072,12 @@ def create_cli_agent(
     # Build middleware stack based on enabled features
     from assistant.events import EventWriter
     from assistant.observability import EventLoggerInnerMiddleware, EventLoggerMiddleware
+    from assistant.plan_gate import PlanGateMiddleware
 
     _ev = EventWriter()
     agent_middleware: list[AgentMiddleware[Any, Any]] = [
         EventLoggerMiddleware(_ev),
+        PlanGateMiddleware(_ev),
         ConfigurableModelMiddleware(
             cli_max_retries=cli_max_retries,
             environ=environment,
