@@ -108,7 +108,21 @@ uv run --project libs/code dcode -a coding-assistant
 uv run --project libs/code dcode config path
 ```
 
-출력의 경로들이 **이 저장소 루트**를 가리키면 정상이다.
+출력에서 **`project hooks.json` 줄만** 이 저장소를 가리키면 정상이다.
+나머지는 전역 설정이라 홈 디렉터리를 가리키는 것이 맞다:
+
+```
+config.toml          ~/.deepagents/config.toml                              ← 전역
+global .env          ~/.deepagents/.env                                     ← 전역
+project hooks.json   <저장소 루트>/.deepagents/hooks.json   (missing)        ← 이 줄만 확인
+user hooks.json      ~/.deepagents/hooks.json                               ← 전역
+auth.json            ~/.deepagents/.state/auth.json                         ← 전역
+```
+
+`project hooks.json`이 `(missing)`인 것도 정상이다. 이 프로젝트는 훅을 쓰지 않고
+미들웨어를 소스에 배선했다 — 훅 신뢰 프롬프트에 의존하지 않기 위한 설계다.
+`project hooks.json`이 홈 디렉터리를 가리키면 **저장소 루트가 아닌 곳에서 실행한 것**이니
+디렉터리를 옮겨 다시 띄운다.
 
 > `-a coding-assistant`는 에이전트 프로필을 분리하는 옵션이다. 기존에 dcode를 쓰던 환경에서도
 > 이 프로젝트의 설정이 섞이지 않는다.
