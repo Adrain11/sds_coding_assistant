@@ -50,7 +50,7 @@ uv sync --project libs/code --extra all-providers
 uv run --project libs/code dcode --version
 ```
 
-`dcode v0.1.69`가 나오면 성공.
+첫 줄에 `deepagents-code 0.1.69`가 나오면 성공.
 
 ---
 
@@ -112,14 +112,16 @@ uv run --project libs/code dcode config path
 ```
 
 출력에서 **`project hooks.json` 줄만** 이 저장소를 가리키면 정상이다.
-나머지는 전역 설정이라 홈 디렉터리를 가리키는 것이 맞다:
+나머지는 전역 설정이라 홈 디렉터리를 가리키는 것이 맞다. 실제 출력은 dcode 버전에 따라
+아래보다 줄이 몇 개 더 있을 수 있다 (`managed config`, `hooks trust`, `recent models` 등) —
+**`project hooks.json` 한 줄만 보면 된다**:
 
 ```
-config.toml          ~/.deepagents/config.toml                              ← 전역
-global .env          ~/.deepagents/.env                                     ← 전역
-project hooks.json   <저장소 루트>/.deepagents/hooks.json   (missing)        ← 이 줄만 확인
-user hooks.json      ~/.deepagents/hooks.json                               ← 전역
-auth.json            ~/.deepagents/.state/auth.json                         ← 전역
+config.toml            ~/.deepagents/config.toml                            (ok)       ← 전역
+global .env            ~/.deepagents/.env                                   (missing)  ← 전역
+project hooks.json     <저장소 루트>/.deepagents/hooks.json                 (missing)  ← 이 줄만 확인
+user hooks.json        ~/.deepagents/hooks.json                             (missing)  ← 전역
+auth.json              ~/.deepagents/.state/auth.json                       (ok)       ← 전역
 ```
 
 `project hooks.json`이 `(missing)`인 것도 정상이다. 이 프로젝트는 훅을 쓰지 않고
@@ -239,7 +241,11 @@ uv run --project libs/code python -m assistant.plan_gate approve <plan_id>
 
 ### 단위 테스트
 
+`pytest`는 2절의 기본 설치(`--extra all-providers`)에는 안 들어간다 — `dependency-groups`의
+`test` 그룹에 있다. 먼저 그 그룹을 추가로 설치한 뒤 돌린다:
+
 ```bash
+uv sync --project libs/code --extra all-providers --group test
 uv run --project libs/code pytest tests/
 ```
 
@@ -295,6 +301,7 @@ uv run --project libs/code pytest tests/
 | 모델 호출이 인증 오류 | 3절의 키 설정. `dcode auth status <provider>`로 확인 |
 | `runs/`가 안 생김 | 저장소 루트가 아닌 곳에서 실행했다. `dcode config path`로 확인 |
 | `No solution found` / `sds-assistant` 설치 실패 | `pip`으로 설치하려 했다. 1절 참조 — `uv`를 써야 한다 |
+| `Failed to spawn: pytest` | `--group test` 없이 sync했다. 6절 "단위 테스트" 참조 |
 
 ---
 
