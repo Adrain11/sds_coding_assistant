@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .env
 runs/
+.claude/settings.local.json
+*.egg-info/
