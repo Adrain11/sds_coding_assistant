@@ -19,6 +19,76 @@
 
 ---
 
+## 🔴 X1. 2026-09-17 · 🔵검토 → 👤사람 (cc 🟣설계 🟢구현) · 커밋 `14f0117`이 `git add -A`로 사고를 냈다
+
+**`docs:` 접두사가 붙은 커밋 하나에 1,319개 파일 · 921,667줄이 들어갔다.**
+
+```
+14f0117  docs: apply I1-I3, register INBOX, approve scope change
+         1319 files changed, 921667 insertions(+), 271 deletions(-)
+```
+
+✅ **먼저 안심할 것 — 비밀정보는 안 들어갔다.** 트리 전체를 훑었고
+`settings.local.json` · `.env` · `auth.json` · `*.key` 모두 없다.
+
+### 들어간 것 (의도한 것 아님)
+
+| # | 무엇 | 왜 문제인가 |
+|---|---|---|
+| **X1-a** | **`libs/libs/` 부활 — 1,306개 파일** | STEP2_PLAN §0 F1이 삭제하라고 했고 09-17 커밋으로 지웠던 중복 디렉터리다. WORKFLOW §7 지뢰 #2가 그대로 재발했다. 디스크에 남아 있던 것을 `git add -A`가 다시 담았다 |
+| **X1-b** | `.gitignore`에서 **`.claude/settings.local.json` 규칙 삭제** | 지금은 안 들어갔지만 **다음 `git add -A`에서 들어간다.** 09-17 오전에 토큰 유출 예방으로 일부러 넣은 줄이다 (STEP2_PLAN §0 F3) |
+| **X1-c** | `libs/code/pyproject.toml`에서 `"assistant"` 의존 + `[tool.uv.sources]` 항목 **삭제** | 계획 §4 작업 3번이 되돌려졌다. 이 상태로는 `assistant` 패키지가 빌드에 안 들어간다 → **DC1·AC1 직결** |
+| **X1-d** | `libs/deepagents/deepagents.egg-info/*` 커밋 | 빌드 산출물. `.gitignore`에 없다 |
+
+> 같은 줄에서 `.gitignore`의 오타 줄(`` x`` ``)이 지워진 것은 잘된 일이다. 그건 되살리지 말 것.
+
+### 🟢구현의 변경은 정당하다 — 섞지 말 것
+
+같은 커밋에 들어간 `assistant/__init__.py`+`assistant/events.py` 삭제 →
+`assistant/assistant/events.py` · `assistant/assistant/observability.py` 이동은 **올바른 수정이다.**
+`assistant/pyproject.toml`의 `packages = ["assistant"]`는 `assistant/assistant/`를 가리키므로,
+이전 배치로는 휠이 만들어지지 않았다. `tests/test_observability.py` 추가도 정상 진행이다.
+
+**되돌릴 것은 X1-a~d 넷뿐이다.**
+
+### 조치 — 히스토리는 고치지 않는다
+
+이미 푸시됐고, STEP2_PLAN §4 작업 0번이 "**이미 푸시된 히스토리는 그대로 두고 삭제 커밋만 얹는다**"로
+정해두었다. 그 원칙을 그대로 따른다. 저장소 용량은 늘지만 제출은 ZIP(작업 트리)이라 영향이 없고,
+히스토리 재작성은 세 환경의 클론을 전부 깨뜨린다.
+
+WSL 작업 사본에서, **`git add -A`를 쓰지 말고** 경로를 하나씩 지정한다:
+
+```bash
+cd ~/sds_coding_assistant
+rm -rf libs/libs                                    # 디스크에서도 지운다 (안 그러면 또 돌아온다)
+git rm -r --cached --quiet libs/libs
+git rm -r --cached --quiet libs/deepagents/deepagents.egg-info
+printf '.claude/settings.local.json\n*.egg-info/\n' >> .gitignore
+# libs/code/pyproject.toml: dependencies에 "sds-assistant" 1줄,
+#   [tool.uv.sources]에 sds-assistant = { path = "../../assistant", editable = true } 1줄 복원
+#   (R4 결과 반영 — 이름이 assistant가 아니라 sds-assistant다)
+git add .gitignore libs/code/pyproject.toml
+git commit -m "fix: drop libs/libs and egg-info, restore gitignore and assistant wiring"
+uv sync --project libs/code --extra all-providers && uv run --project libs/code dcode --version
+git push
+```
+
+마지막 줄의 빌드 확인까지 해야 X1-c가 진짜 풀린 것이다 (§0 S8 — `libs/` 구조는 상대경로 의존이다).
+
+### 🔴 재발 방지 — WORKFLOW §5에 넣어달라 (🟣설계)
+
+> **`git add -A` 금지.** 경로를 지정해서 add한다 (`git add docs/plan`, `git add assistant tests`).
+> 세 환경이 한 작업 사본을 공유하므로, `-A`는 남이 작업 중인 미완성 상태와
+> 추적되지 않던 쓰레기를 같이 담는다. 09-17에 이걸로 1,319개 파일이 들어갔다.
+
+커밋 메시지 접두사도 실제 내용과 맞춰야 한다. `docs:`인데 소스 1,300개가 들어가면
+나중에 무엇이 언제 바뀌었는지 히스토리로 추적할 수 없다.
+
+→ 응답:
+
+---
+
 ## ✅ 2026-09-17 · 🔵검토 → 🟢구현 (cc 🟣설계) · `events.py` 다시 쓰기 전에 읽을 것 3개
 
 **전제 — 다시 쓰는 것은 맞다.** 갱신된 `STEP2_PLAN.md`를 소스와 대조해 확인했다.
@@ -196,7 +266,7 @@ G3의 타입 이름은 검토 쪽 `code_changed`(과거형)로 통일했고, `ru
 
 ---
 
-## 🟡 2026-09-17 · 🔵검토 → 🟣설계 · R4(패키지명 `assistant`) 확인은 검토가 대신할 수 있다
+## ✅ 2026-09-17 · 🔵검토 → 🟣설계 · R4(패키지명 `assistant`) 확인은 검토가 대신할 수 있다 — **확인 완료, 이름 변경 필요**
 
 `libs/code/pyproject.toml:33`의 `"assistant"`가 PyPI에 실재하는 이름이면,
 채점자가 `uv` 대신 `pip install -e libs/code`로 갔을 때 남의 패키지가 설치된다
@@ -212,6 +282,45 @@ G3의 타입 이름은 검토 쪽 `code_changed`(과거형)로 통일했고, `ru
 import 이름 `assistant`는 유지**한다(`[project] name = "sds-assistant"` + 패키지 디렉터리는 `assistant/`).
 파일이 3개인 지금이 가장 싸다. 어느 쪽이든 **README 실행 절차에 `uv` 사용을 명시**한다.
 결과를 이 항목에 적어주면 🟣설계가 `STEP2_PLAN.md` §7 리스크를 확정한다.
+
+→ **결과 (🔵검토, 09-17): 🔴 실재한다. 이름을 바꿔야 한다.**
+
+```
+GET https://pypi.org/pypi/assistant/json      → 200
+GET https://pypi.org/pypi/sds-assistant/json  → 404
+GET https://pypi.org/pypi/dcode-assistant/json→ 404
+```
+
+| | |
+|---|---|
+| name | `assistant` |
+| version | **2.2.0a4** (릴리스 47개) |
+| summary | "Your very own Assistant. Because you deserve it." |
+| author | Danny Waser |
+| requires-python | `>=3.8,<4` |
+
+**우리 요구(`>=3.12,<4.0`)와 겹친다.** 즉 채점자 환경에서 설치가 거부되지 않고
+**조용히 성공한다.** 그 뒤 `import assistant`가 남의 패키지를 집어서
+`ModuleNotFoundError: assistant.events` 같은 엉뚱한 오류로 나타난다.
+설치 단계에서 안 터지고 실행 단계에서 터지는 게 가장 나쁜 형태다.
+
+→ 미리 정해둔 조치대로 **`sds-assistant`로 간다.** 선점돼 있지 않다.
+
+**고칠 곳 3군데** (2·3은 현재 되돌려져 있다 — 아래 INBOX-X1 참조)
+
+1. `assistant/pyproject.toml` → `[project] name = "sds-assistant"`
+   `[tool.hatch.build.targets.wheel] packages = ["assistant"]`는 **그대로 둔다.**
+   배포명만 바뀌고 import 이름은 `assistant`로 유지된다.
+2. `libs/code/pyproject.toml` `dependencies` → `"sds-assistant"`
+3. `libs/code/pyproject.toml` `[tool.uv.sources]` → `sds-assistant = { path = "../../assistant", editable = true }`
+
+**부수 효과 하나가 오히려 이득이다** — 이름을 바꾸면 채점자가 `pip install -e libs/code`로 갔을 때
+PyPI에 `sds-assistant`가 없으므로 **설치 단계에서 즉시 실패한다.** 남의 패키지가 조용히 깔리는 것보다
+낫다. 실패 메시지가 곧 "`uv`를 쓰라"는 신호가 된다. README에 그 문구를 넣으면 완결된다.
+
+> 참고 — 현재 `assistant/pyproject.toml`의 `packages = ["assistant"]`는
+> **`assistant/assistant/`** 를 가리킨다. 🟢구현이 09-17에 디렉터리를 중첩 구조로 바꾼 것은
+> 이 설정과 맞추기 위한 **올바른 수정**이다. 이전 배치(`assistant/events.py`)로는 휠이 안 만들어졌다.
 
 ---
 
