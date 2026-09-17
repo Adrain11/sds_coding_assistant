@@ -314,6 +314,7 @@ class EventLoggerInnerMiddleware(AgentMiddleware):
                 lambda: self._ev.record(
                     MODEL_ERROR,
                     thread_id=thread_id,
+                    status="error",
                     name=_model_name(request),
                     attempt=attempt,
                     dur_ms=(time.monotonic() - start) * 1000,
@@ -346,6 +347,7 @@ class EventLoggerInnerMiddleware(AgentMiddleware):
                 lambda: self._ev.record(
                     MODEL_ERROR,
                     thread_id=thread_id,
+                    status="error",
                     name=_model_name(request),
                     attempt=attempt,
                     dur_ms=(time.monotonic() - start) * 1000,

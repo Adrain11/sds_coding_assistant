@@ -174,6 +174,7 @@ def test_inner_wrap_model_call_records_error_and_reraises(tmp_path: Path) -> Non
 
     events = _events(ev, run_id)
     assert events[-1]["type"] == "model_error"
+    assert events[-1]["status"] == "error"  # 검토 R-A: report fail keys on this
     assert events[-1]["attempt"] == 1
     assert "timed out" in events[-1]["error"]
 

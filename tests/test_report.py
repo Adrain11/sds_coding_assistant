@@ -187,6 +187,49 @@ def test_cmd_fail_no_failures(tmp_path: Path, capsys) -> None:
     assert "실패한 이벤트 없음" in capsys.readouterr().out
 
 
+def test_cmd_fail_catches_a_model_error_with_no_tool_failure(tmp_path: Path, capsys) -> None:
+    """검토 R-A regression: a run whose only failure is `model_error` (no
+    `tool_end status=error`) must still be found by `fail`/`_collect_metrics`
+    — this is exactly the "provider died / rate-limited" case, and it was
+    silently invisible before `MODEL_ERROR` carried `status="error"`.
+    """
+    events = [
+        FIXTURE_EVENTS[0],  # run_start
+        {"ts": "...", "run_id": "model-fail-run", "seq": 2, "type": "model_start", "name": "m1", "attempt": 1},
+        {
+            "ts": "...",
+            "run_id": "model-fail-run",
+            "seq": 3,
+            "type": "model_error",
+            "name": "m1",
+            "status": "error",
+            "attempt": 1,
+            "dur_ms": 50.0,
+            "error": "RateLimitError: 429",
+        },
+        {
+            "ts": "...",
+            "run_id": "model-fail-run",
+            "seq": 4,
+            "type": "run_end",
+            "status": "ok",
+            "dur_ms": 60.0,
+            "data": {"event_count": 3, "error_count": 1},
+        },
+    ]
+    _write_fixture(tmp_path, run_id="model-fail-run", events=events)
+
+    metrics = _collect_metrics(events)
+    assert metrics["errors"] == 1
+
+    exit_code = cmd_fail("model-fail-run", tmp_path)
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "실패한 이벤트 없음" not in out
+    assert "seq=3 model_error" in out
+    assert "RateLimitError: 429" in out
+
+
 # --- stats: thin wrapper around the same metrics as show's footer (D7) ---
 
 
