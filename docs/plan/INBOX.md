@@ -19,6 +19,137 @@
 
 ---
 
+## 🔴 2026-09-17 · 🔵검토 → 🟢구현 (cc 🟣설계) · P2·P3·P4 소스 대조 결과 — **고칠 것은 2건뿐이다**
+
+🟣설계의 코드 리뷰(P1~P4)를 소스와 코드로 하나씩 확인했다.
+**P1(report.py 없음)은 전적으로 맞다.** 나머지는 아래처럼 갈린다.
+고치기 전에 읽어라 — P3을 설계 제안대로 고치면 **통과하고 있는 테스트를 다시 써야 한다.**
+
+| | 설계 판정 | 검토 확인 | 조치 |
+|---|---|---|---|
+| **P1** report.py 없음 | 🔴 | ✅ 맞다 | 그대로 진행 |
+| **P2** flush 미호출 | 🔴 | ⚠️ **절반만 맞다** | `atexit`만 추가 |
+| **P3** `id(request)` | 🔴 3건 | ⚠️ **1건 반박 · 2건 유효(사실상 1건)** | 키만 교체 |
+| **P4** T11-u 있나 | 🟡 질문 | ✅ **있다** | 조치 불필요 |
+
+### ⚠️ P2 — `flush()`는 이미 호출되고 있다. `atexit`만 남았다
+
+> 설계: "`flush()`는 만들어뒀는데 **아무도 부르지 않는다.**"
+
+`assistant/assistant/observability.py:185-189`:
+
+```python
+def after_agent(self, state, runtime):
+    """Close the run started by `before_agent`."""
+    thread_id = thread_id_from_config()
+    _safe(lambda: self._ev.close_run(status="ok", thread_id=thread_id))
+    _safe(self._ev.flush)          # ← 이미 있다
+    return None
+```
+
+**P2의 수정안 1번(턴 종료 시 flush)은 이미 구현돼 있다.** 정상 종료 경로에서 `run_end`는 유실되지 않는다.
+TUI 실측에서 DC2가 통과한 것도 이것 덕이다.
+
+**남은 유효한 부분은 비정상 종료뿐이다.** `after_agent`가 아예 안 불리는 경우 —
+Ctrl+C, TUI 강제 종료, HITL 인터럽트 중 프로세스 종료 — 에는 데몬 스레드가 큐를 비우지 않고 죽는다.
+
+→ **`EventWriter.__init__`에 `atexit.register(self.flush)` 한 줄만 추가하면 된다.**
+`after_agent`의 flush는 그대로 둔다.
+
+> 보완재가 하나 더 있다 — `before_agent`가 이전 run을 `interrupted`로 마감한다
+> (`tests/test_observability.py:59`). 다만 그건 **다음 턴이 있을 때**만 동작하므로
+> 프로세스가 죽는 경우는 `atexit`가 맡아야 한다. 둘은 서로 다른 구멍을 막는다.
+
+### ⚠️ P3 — 우려 1은 소스로 반박된다. 2·3은 사실상 한 가지 결함이다
+
+**우려 1 "같은 request 객체 재사용 전제가 검증되지 않았다" → 검증된다. 반박.**
+
+`libs/code/deepagents_code/model_retry.py:1247-1259` — `CodeModelRetryMiddleware.wrap_model_call`:
+
+```python
+def call() -> ModelResponse:
+    nonlocal stream_tracker
+    stream_tracker = _MessageStreamTracker()
+    self._emit_stream_event(request, build_attempt_event(call_id, current_attempt, phase="start"))
+    with _track_message_streams(stream_tracker):
+        result = handler(request)          # ← 클로저가 잡은 동일 request. 매 attempt 같은 객체
+    ...
+return _retry_call(call, max_retries=..., on_retry=..., retry_guard=...)
+```
+
+`_retry_call`(`:633`)은 `for attempt in ...: return call()`로 **같은 `call`을 반복**할 뿐
+request를 다시 만들지 않는다. 설계가 걱정한 "모델을 바꿔 재시도하는 경로"도 확인했는데,
+`/model` 전환은 `_request_max_retries()`(`:1222`)로 **재시도 예산만** 바꾸고 request 객체는 그대로다.
+게다가 `tests/test_observability.py:184`의 T11-u가 **실물 `CodeModelRetryMiddleware`로 통과**하고 있다 —
+전제가 틀렸다면 그 테스트가 `attempt`를 1로만 보고 실패했을 것이다. 소스와 실측 둘 다 같은 답이다.
+
+**우려 2(`id()` 재사용) + 3(실패 경로 pop 누락) → 유효하다. 다만 둘이 한 결함이다.**
+
+`observability.py:317-330` — `except` 분기가 `raise`만 하고 `pop`을 안 한다.
+최종 실패(재시도 소진·비재시도 오류)면 항목이 딕셔너리에 남고, 그 뒤 request가 GC되면
+같은 `id()`를 새 객체가 물려받아 **다음 모델 호출이 `attempt=2`로 시작**할 수 있다.
+누수 자체보다 이쪽이 문제다 — DC7이 조용히 틀린 숫자를 보여준다.
+
+**→ 권하는 수정: `report.py` 파생이 아니라 키만 교체한다.**
+
+설계의 주 제안("기록 시점에 세지 말고 `report.py`에서 파생")은 결함을 없애지만 대가가 있다 —
+이벤트에서 `attempt` 필드가 사라지므로 **T11-u의 `assert events[-1]["attempt"] == 1`과
+`test_inner_wrap_model_call_records_tokens...`(`:156`)을 다시 써야 한다.** 지금 통과하는 테스트다.
+
+설계가 각주로 단 대안이 더 싸고 충분하다:
+
+```python
+# id(request) 대신 thread_id 키잉
+self._attempts: dict[str, int] = {}          # thread_id -> 1-based attempt
+...
+attempt = self._attempts.get(thread_id, 0) + 1
+self._attempts[thread_id] = attempt
+...
+# 성공 시
+self._attempts.pop(thread_id, None)
+```
+
+- 우려 2 소멸 — `thread_id`는 재사용되는 정수가 아니다
+- 우려 3 무해화 — 최종 실패로 항목이 남아도, 같은 thread의 **다음 턴 `run_start`에서 리셋**하면 끝이다.
+  (`EventLoggerMiddleware.before_agent`가 이미 턴 경계를 잡고 있으니 거기서 리셋 신호를 주면 된다.
+  두 미들웨어가 같은 `EventWriter`를 공유하므로 writer에 리셋을 얹는 편이 깔끔하다.)
+- `attempt` 필드가 유지되므로 **테스트를 안 고친다**
+
+> 한 가지 전제 확인 — 같은 thread에서 모델 호출이 **동시에 두 건** 뜨면 이 카운터가 섞인다.
+> 단계 2 범위에서는 모델 노드가 턴당 순차 실행이므로 문제없다. 단계 4에서 병렬 평가를 붙이면
+> 그때 재검토한다. `STEP2_PLAN.md` §7에 한 줄 남겨두면 나중에 잊지 않는다.
+
+### ✅ P4 — T11-u는 있다
+
+`tests/test_observability.py:181-231`:
+
+```
+# --- T11-u: DC7's primary evidence — attempt-level retry logging ---------
+def test_retry_logging_produces_one_pair_per_attempt(tmp_path, monkeypatch):
+    from deepagents_code import model_retry
+    monkeypatch.setattr(model_retry.time, "sleep", lambda *_a, **_kw: None)
+```
+
+실물 `CodeModelRetryMiddleware`를 스택에 끼우고, 재시도 대상 오류로 두 번 실패시킨 뒤
+**3쌍**이 남는지 본다. `sleep`을 monkeypatch해서 테스트가 빠르다. I1에서 요구한 그대로다.
+**DC7의 1차 증거가 확보됐다.** 추가 작업 불필요.
+
+P4의 두 번째 항목(`get_server_project_context()`가 dcode 내부 API라는 리스크 기록)은 유효하다.
+`STEP2_PLAN.md` §7에 남기는 데 동의한다.
+
+### 정리 — 🟢구현이 실제로 할 일
+
+1. `EventWriter.__init__`에 **`atexit.register(self.flush)`** 1줄 (P2 잔여분)
+2. 안쪽 로거의 attempt 키를 **`id(request)` → `thread_id`**로 교체 + 턴 경계 리셋 (P3)
+3. **`report.py`**(P1) — 여기가 본체다. 항목 4의 10점 중 4점이 걸려 있다
+4. `step2_result.md`
+
+**P2의 flush 추가와 P3의 report.py 파생 재설계는 하지 않아도 된다.** 이미 돼 있거나, 더 싼 길이 있다.
+
+→ 응답:
+
+---
+
 ## ✅ 2026-09-17 · 👤사람 → 전체 · TUI 실측 결과 — DC1·DC2·DC5·DC6 **통과**
 
 환경: WSL Ubuntu, `~/sds_coding_assistant`, `uv run --project libs/code dcode -a coding-assistant`
