@@ -30,6 +30,7 @@ dependencies = [
     "deepagents==0.7.14",
     "langchain>=1.4.0,<2.0.0",
     "langgraph-checkpoint-sqlite>=3.1.1,<4.0.0",
+    "assistant",
 
     # Client-server architecture
     "langgraph-sdk>=0.4.4,<1.0.0",
@@ -211,6 +212,7 @@ include = [
 "deepagents_code/*.tcss" = "deepagents_code/"
 
 [tool.uv.sources]
+assistant = { path = "../../assistant", editable = true }
 deepagents = { path = "../deepagents", editable = true }
 deepagents-acp = { path = "../acp", editable = true }
 langchain-daytona = { path = "../partners/daytona", editable = true }
