@@ -19,6 +19,84 @@
 
 ---
 
+## 🔴 2026-09-17 · 🔵검토 → 🟢구현 (cc 🟣설계) · `events.py` 다시 쓰기 전에 읽을 것 3개
+
+**전제 — 다시 쓰는 것은 맞다.** 갱신된 `STEP2_PLAN.md`를 소스와 대조해 확인했다.
+검토 지적 10건(R1~R4, C1~C6)과 제출 갭(G1·G3·G5)이 모두 반영됐고,
+검토가 못 본 F4(프로바이더 extra 없으면 TUI가 안 뜬다)까지 새로 잡혔다. 계획 자체는 탄탄하다.
+
+**다시 쓰는 범위는 전부가 아니다.**
+
+| 파일 | 조치 |
+|---|---|
+| `assistant/events.py` | **다시 쓴다.** D7 타입 6개 + `EventWriter`를 두 미들웨어가 공유하는 구조 → 소유 구조가 바뀐다 |
+| `tests/test_events.py` | 따라서 같이 |
+| `assistant/__init__.py`, `assistant/pyproject.toml`, `libs/code/pyproject.toml` 배선 | **그대로 둔다.** 건드릴 이유 없다 |
+
+아래 3개는 **착수 전에** 반영해야 한다. 안 그러면 다시 만든 것을 또 고쳐야 한다.
+
+### 🔴 I1. T11의 재시도 유발 방법이 작동하지 않는다 — 소스로 확인함
+
+`STEP2_PLAN.md` §6 T11은 "잘못된 모델명이나 일시적으로 끊긴 키로 1회 실패시킨다"고 되어 있다.
+그런데 재시도 대상은 이렇게 한정돼 있다:
+
+```
+libs/code/deepagents_code/model_retry.py:92
+_RETRYABLE_STATUS_CODES = frozenset({408, 409, 429})     # + 5xx 범위
+```
+
+판정 순서는 `ModelError.is_retryable → httpx 전송 오류 → HTTP 상태 코드 → SDK 클래스명 →
+표준 Timeout/ConnectionError` (`model_retry.py:473` 주석).
+
+**잘못된 모델명 = 404, 잘못된 키 = 401. 둘 다 재시도 대상이 아니다.** 즉시 실패한다.
+그대로 하면 DC7이 영원히 안 나오고, 원인을 D2b 구현 탓으로 오인해서 멀쩡한 코드를 뜯게 된다.
+
+**되는 방법 (권장 순서)**
+
+1. **단위 테스트** — `CodeModelRetryMiddleware` + `EventLoggerInnerMiddleware`를 스택으로 조립하고
+   handler가 429(또는 503)를 두 번 던지게 한다. `model_start`/`model_end`가 attempt 단위로
+   **3쌍** 남는지 확인. 재현 가능하고 채점자도 돌릴 수 있다. **이걸 DC7의 1차 증거로 삼는다.**
+2. **TUI 실측** — 꼭 필요하면 요청 도중 프록시/네트워크를 잠깐 끊어 전송 오류를 낸다
+   (httpx transient, `model_retry.py:450`). 401/404로는 안 된다.
+
+→ T11 문구 수정이 필요하다 (🟣설계).
+
+### 🔴 I2. `EventWriter`를 누가 만드는지가 계획에 없다 — 배선은 2곳이 아니라 3곳이다
+
+D2b는 "같은 `EventWriter` 인스턴스를 **공유**한다"고만 쓰고 **생성 주체**를 안 정했다.
+작업표 8번의 "각각 import 1줄 + insert 1줄, 총 2곳"으로는 부족하다.
+공유 인스턴스를 만드는 줄이 하나 더 필요하다:
+
+```python
+_ev = EventWriter()                                  # ← 이 줄이 계획에 없다
+agent_middleware = [EventLoggerMiddleware(_ev), ...] # ① 맨 앞
+...
+agent_middleware.append(EventLoggerInnerMiddleware(_ev))  # ② 맨 끝
+```
+
+**생성자 주입으로 간다.** 모듈 전역 싱글턴은 쓰지 않는다 — 테스트에서 격리가 안 되고
+(T3-u가 writer를 일부러 터뜨려야 한다), 서브에이전트·병렬 실행에서 상태가 섞인다.
+
+→ 작업표 8번을 "**3곳 3줄**"로 고쳐야 한다 (🟣설계). "배선 최소" 원칙은 여전히 지켜진다.
+
+### 🔴 I3. `run_id` 상태 경합 — I2보다 중요하다
+
+바깥 로거가 `before_agent`에서 run을 열고, 안쪽 로거는 `wrap_model_call`에서
+**"지금 어느 run인지"**를 알아야 한다. writer 인스턴스에 `self.current_run_id`처럼
+평범한 속성으로 들고 있으면 **병렬 도구 호출과 서브에이전트에서 run이 섞인다.**
+`model_start`가 엉뚱한 run에 붙으면 4-1·4-3이 통째로 신뢰를 잃는다.
+
+→ 현재 run은 **`contextvars.ContextVar`**로 들고 간다. async 태스크마다 독립적으로 상속된다.
+→ 단위 테스트 추가 제안 — **T1b**: 서로 다른 run 2개를 async로 동시에 열고 각각 이벤트를 쓴 뒤,
+   두 `events.jsonl`에 상대 run의 이벤트가 **한 줄도 섞이지 않는지** 확인.
+   기존 T1은 동시 *쓰기*만 보고 이 경합은 안 본다.
+
+→ D1(run 단위)에 한 줄, §6에 T1b 추가가 필요하다 (🟣설계).
+
+→ 응답:
+
+---
+
 ## 🔴 2026-09-17 · 🔵검토 → 🟣설계 · WORKFLOW.md 수정 요청 5건
 
 검토는 계획 문서를 직접 고치지 않는다(WORKFLOW.md §1). 아래는 설계가 반영해 주기를 요청하는 것.
