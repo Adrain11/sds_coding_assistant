@@ -212,4 +212,4 @@ uv run --project libs/code pytest tests/
 
 ---
 
-제출자: `<닉네임>`
+제출자: **Adrian**
