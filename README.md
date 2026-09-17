@@ -10,7 +10,7 @@ dcode(v0.1.69)에 **계획 게이트 · 메모리/자기개선 · 실행 모니�
 
 | | |
 |---|---|
-| Python | **3.12 이상** (`>=3.12,<4.0`) |
+| Python | **3.12 이상** (`>=3.12,<4.0`) — **없어도 된다. `uv`가 알아서 받아온다** |
 | 패키지 관리자 | **[uv](https://docs.astral.sh/uv/) 필수** — 아래 참조 |
 | 모델 | 프로바이더 API 키 1개 (OpenAI / Anthropic / OpenRouter 등) |
 
@@ -40,6 +40,9 @@ uv sync --project libs/code --extra all-providers
 
 > `--extra all-providers`를 빼면 의존성은 깔리지만 **모델 프로바이더가 없어 TUI가 뜨지 않는다.**
 > 특정 프로바이더만 쓸 거면 `--extra openai`처럼 좁혀도 된다.
+
+> **Python 3.12가 시스템에 없어도 이 명령이 그대로 된다.** `uv`가 필요한 버전을 자동으로
+> 내려받아 전용 가상환경(`libs/code/.venv`)에 쓴다. 시스템 Python은 건드리지 않는다.
 
 설치 확인:
 
