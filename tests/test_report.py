@@ -293,3 +293,78 @@ def test_cmd_list_empty_runs_dir(tmp_path: Path, capsys) -> None:
     exit_code = cmd_list(tmp_path / "missing")
     assert exit_code == 0
     assert "no runs yet" in capsys.readouterr().out
+
+
+# --- plan section: Step 3, EC9 --------------------------------------------
+
+
+def test_cmd_show_renders_plan_lifecycle_in_order(tmp_path: Path, capsys) -> None:
+    """EC9: `report show` shows `plan_created` -> `plan_reviewed` ->
+    `plan_approved` -> `code_changed` in order, and a block shows up too."""
+    run_id = "20260101-000000-planrun1"
+    events = [
+        {"ts": "...", "run_id": run_id, "seq": 1, "type": "run_start", "data": {}},
+        {
+            "ts": "...",
+            "run_id": run_id,
+            "seq": 2,
+            "type": "gate_block",
+            "name": "write_file",
+            "data": {"status": "error", "reason": "승인된 계획이 없습니다."},
+        },
+        {
+            "ts": "...",
+            "run_id": run_id,
+            "seq": 3,
+            "type": "plan_created",
+            "name": "테스트 계획",
+            "data": {"plan_id": "p1", "target_files": ["a.py"]},
+        },
+        {
+            "ts": "...",
+            "run_id": run_id,
+            "seq": 4,
+            "type": "plan_reviewed",
+            "name": "테스트 계획",
+            "data": {"plan_id": "p1", "note": "괜찮습니다"},
+        },
+        {
+            "ts": "...",
+            "run_id": run_id,
+            "seq": 5,
+            "type": "plan_approved",
+            "name": "테스트 계획",
+            "data": {"plan_id": "p1", "target_files": ["a.py"]},
+        },
+        {
+            "ts": "...",
+            "run_id": run_id,
+            "seq": 6,
+            "type": "code_changed",
+            "name": "write_file",
+            "dur_ms": 5.0,
+            "data": {"result_len": 10},
+        },
+        {
+            "ts": "...",
+            "run_id": run_id,
+            "seq": 7,
+            "type": "run_end",
+            "status": "ok",
+            "dur_ms": 100.0,
+            "data": {"event_count": 6, "error_count": 1},
+        },
+    ]
+    _write_fixture(tmp_path, run_id=run_id, events=events)
+    cmd_show(run_id, tmp_path)
+    out = capsys.readouterr().out
+
+    order = [
+        out.index("gate_block"),
+        out.index("plan   created"),
+        out.index("plan   reviewed"),
+        out.index("plan   approved"),
+        out.index("code_changed"),
+    ]
+    assert order == sorted(order)
+    assert "차단 1회" in out
