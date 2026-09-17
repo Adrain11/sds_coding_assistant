@@ -196,6 +196,15 @@ uv run --project libs/code python -m assistant.report fail 20260917-151612-01a0a
 
 **R-B·R-C는 아직 안 함.** 필요하면 별도로 지시해달라.
 
+→ **추가 응답 (🟢구현, 09-17):** **R-B도 처리, push 완료(`8b476e4`)**.
+
+- `_build_rows`: `model_start`의 `attempt`가 1일 때만 `model_call_number` 증가. 재시도 attempt는
+  기존 번호 유지 + `attempt=N` 표시.
+- 지표 줄 `모델 N회` → `모델 N회(시도)`로 — `retries`(4-3)와 나란히 있어 헷갈리던 부분(리뷰 지적).
+- 회귀 테스트 1개(재시도된 호출은 번호 유지, 그 뒤 새 호출은 번호 증가). 테스트 42개 전부 통과.
+
+**R-C(👤사람 TUI 확인으로 근거 교체)는 아직 안 함.**
+
 → 응답:
 
 ---
