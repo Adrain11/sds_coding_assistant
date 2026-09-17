@@ -8,12 +8,39 @@
 |---|---|---|
 | DC1 | ✅ TUI 실측(👤사람) | INBOX "TUI 실측 결과" |
 | DC2 | ✅ TUI 실측(👤사람) — run_start~run_end 전부 확인 | 〃 |
-| DC3 | ✅ `report show` 타임라인+총 소요 | `assistant/report.py::cmd_show` + `tests/test_report.py` |
-| DC4 | ✅ `report fail` — 실패 + 직전 3개 맥락 | `cmd_fail` + 테스트 |
+| DC3 | ✅ **TUI 실측(👤사람, 09.17)** — 실제 TUI가 만든 run에 `report show`를 돌려 타임라인 + `지표 … 총 N.Ns` 확인 | 아래 §TUI 실측 · 단위 `tests/test_report.py` |
+| DC4 | ✅ **TUI 실측(👤사람, 09.17)** — `report fail`이 `>>` 마커와 `seq=` 맥락을 출력 | 아래 §TUI 실측 · 단위 `tests/test_report.py` |
 | DC5 | ✅ TUI 실측(👤사람) — `runs/` 읽기전용·생성불가 둘 다 정상 동작 | INBOX |
 | DC6 | ✅ TUI 실측(👤사람) — 로거 출력 미섞임 | INBOX |
 | DC7 | ✅ **1차 증거는 단위 테스트** `test_retry_logging_produces_one_pair_per_attempt` (실물 `CodeModelRetryMiddleware` 스택, 3쌍 확인) | `tests/test_observability.py` |
-| DC8 | ✅ `report show`의 계층형 trace(`├─`/`└─`) | `cmd_show`/`_render_trace` |
+| DC8 | ✅ **TUI 실측(👤사람, 09.17)** — `run …`으로 시작하는 `├─`/`└─` 계층 출력 확인 | 아래 §TUI 실측 · `cmd_show`/`_render_trace` |
+
+## TUI 실측 — DC3 · DC4 · DC8 (2026.09.17, 👤사람)
+
+🔵검토 R-C 지적에 따라 확인했다. 단위 테스트는 **고정 jsonl 픽스처**로 돌기 때문에,
+실제 TUI가 만든 `events.jsonl`로도 같은 출력이 나오는지는 별도 확인이 필요했다
+(S11처럼 픽스처와 실물이 갈리는 지점이 실제로 있었다).
+
+절차 — TUI에서 작업 두 개를 시킨 뒤 종료하고 조회:
+
+```
+TUI:  README.md 읽어줘          → 성공 run
+TUI:  없는파일.txt 읽어줘        → 실패 run
+$ uv run --project libs/code python -m assistant.report list
+$ uv run --project libs/code python -m assistant.report show $(ls -1 runs|sort|tail -1)
+$ uv run --project libs/code python -m assistant.report fail $(ls -1 runs|sort|tail -1)
+```
+
+| | 확인한 것 | 결과 |
+|---|---|---|
+| **선행** | `report list`가 두 run을 **최신 순**으로 표시 (`OK 9.5s 실패 1` / `OK 18.0s 실패 0`) | ✅ — `report.py`가 미들웨어와 **같은 `runs/`를 본다**. S11 회귀 없음 |
+| **DC3** | `show` 하단 지표 줄 (`도구 1회` · `재시도 0회` · 총 소요) | ✅ |
+| **DC8** | `run …`으로 시작하는 `├─`/`└─` 계층 출력 | ✅ |
+| **DC4** | `fail`에 `>>` 마커 + `seq=` 맥락 | ✅ |
+
+> **남은 것** — README §6 항목 4에 `report show`의 **실제 출력 예시**를 붙이는 일.
+> 채점자가 자기 환경에서 돌렸을 때 "이렇게 나오면 맞다"를 알 수 있어야 한다
+> (🟣설계 N6과 같은 취지). 출력 전문이 필요하므로 🟢구현이 파일로 뽑아 붙인다.
 
 ## 실패·시행착오 (숨기지 않고 기록)
 
