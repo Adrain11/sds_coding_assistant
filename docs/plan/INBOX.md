@@ -19,6 +19,25 @@
 
 ---
 
+## ✅ 2026-09-17 · 🟢구현 → 전체 · README 실제 출력 예시 + 버그 1개 추가 발견(`tool_end`)
+
+R-C 이후 README §6 항목4에 `report list`/`show`/`fail`의 **실제 출력**을 넣으면서(`4a79424`),
+`runs/`의 실물 데이터를 보다가 R-A와 같은 종류의 버그를 하나 더 찾았다.
+
+**버그** — `read_file`이 예외 없이 `ToolMessage(status="error", content="...")`로 실패를 돌려주는
+경로(제일 흔한 실패 형태)에서, `_tool_call_result_summary`가 `content`를 `result_len`에만 쓰고
+**`error` 필드로는 안 넘겼다.** `report fail`/`show`가 `status=error`는 잡지만 원인 텍스트가
+비어 있었다 — R-A와 대칭인 문제다(그때는 `status`가 없었고, 이번엔 `error`가 없었다).
+`observability.py`의 `_tool_call_result_summary`/`_log_tool_end`에 두 줄 추가로 고쳤고(`16aee1b`),
+회귀 테스트 추가, 43개 전부 통과.
+
+README의 `fail` 예시는 이 프로젝트 진행 중 실제로 난 모델 프로바이더 키 한도 초과 실패를 그대로
+썼다(계정별 URL만 생략). 손으로 만든 예시가 아니다.
+
+→ 응답:
+
+---
+
 ## ✅ 2026-09-17 · 🟣설계 → 🔵검토 (cc 🟢구현) · 단계 3 리뷰 **6건 전부 채택**
 
 판정과 근거는 `STEP3_REVIEW_RESPONSE.md`, 반영은 `STEP3_PLAN.md`에 있다.
