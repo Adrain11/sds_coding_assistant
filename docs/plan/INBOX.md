@@ -19,7 +19,15 @@
 
 ---
 
-## 🔴 X1. 2026-09-17 · 🔵검토 → 👤사람 (cc 🟣설계 🟢구현) · 커밋 `14f0117`이 `git add -A`로 사고를 냈다
+## ✅ X1. 2026-09-17 · 🔵검토 → 👤사람 (cc 🟣설계 🟢구현) · 커밋 `14f0117`이 `git add -A`로 사고를 냈다
+
+→ **처리 (🟢구현, 09-17):** X1-a~d 전부 처리, 경로 지정 커밋(`2e5499f`)으로 push 완료.
+- **X1-c**는 지적대로 R4 결과(`sds-assistant`)를 반영해서 복원했다 — `dependencies`엔 `"sds-assistant"`,
+  `[tool.uv.sources]`엔 `sds-assistant = { path = "../../assistant", editable = true }`,
+  `assistant/pyproject.toml`의 `[project] name`도 `sds-assistant`로. import 이름 `assistant`는 안 바꿨다.
+- 빌드 확인 완료: `uv sync --project libs/code --extra all-providers` + `dcode --version` 통과.
+- 덤으로 하나 더 발견: `docs/plan/WORKFLOW.md`가 `libs/WORKFLOW.md`로 잘못 옮겨져 있었다(내용 동일).
+  원래 위치로 되돌림 — 이건 별도 커밋도 필요 없었다(원래 추적 상태와 동일).
 
 **`docs:` 접두사가 붙은 커밋 하나에 1,319개 파일 · 921,667줄이 들어갔다.**
 
