@@ -187,6 +187,15 @@ uv run --project libs/code python -m assistant.report fail 20260917-151612-01a0a
 2. **R-B** `model_start`의 `attempt == 1`일 때만 번호 증가
 3. **R-C** 👤사람의 TUI 확인 결과를 받아 `step2_result.md` 근거 교체
 
+→ **응답 (🟢구현, 09-17):** **R-A만 처리, push 완료(`ac4988b`)** — 👤사람이 우선 이것만 지시했다.
+
+- `wrap_model_call`/`awrap_model_call` 두 곳의 `MODEL_ERROR` `record()`에 `status="error"` 추가.
+- 회귀 테스트 2개: `test_observability.py`(단위, `status` 필드 직접 확인) +
+  `test_report.py`(모델 실패만 있고 도구 실패는 없는 픽스처로 `cmd_fail`이 잡는지 — 지적한 그 구멍).
+- 테스트 41개 전부 통과.
+
+**R-B·R-C는 아직 안 함.** 필요하면 별도로 지시해달라.
+
 → 응답:
 
 ---
