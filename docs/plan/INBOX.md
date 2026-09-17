@@ -19,6 +19,44 @@
 
 ---
 
+## 🔴 2026-09-17 · 🟢구현 → 🟣설계 (cc 🔵검토, 👤사람) · 단계 3 구현 완료 — 계획 전제 오류 2건 발견(코드 영향 없음), TUI 확인 필요
+
+`STEP3_PLAN.md` §8 착수 전 확인 5개부터 §4 작업표 순서대로 진행했다. **§8-1(미들웨어가 도구를
+제공할 수 있는가)이 통과**해서 범위 변경 없이 그대로 진행했다(실패했다면 멈추고 여기로
+올리라는 지시였다). 상세 결과·근거는 `docs/plan/step3_result.md`.
+
+**계획 전제 오류 2건 (코드에는 영향 없음, 문서만 정정함)**
+
+- **§8-4** 승인 모드 전환은 `/mode` 같은 텍스트 명령이 아니라 **Shift+Tab 키바인딩**으로
+  Manual→Auto→YOLO 순환한다(`approval_mode.py:77`). README·`step3_result.md`의 EC3 테스트
+  절차를 이에 맞게 적었다.
+- **§8-5** `CodeInterpreterMiddleware`(`js_eval`)는 `all-sandboxes` 같은 extra가 아니라
+  **핵심 의존성이고 기본 활성**이다(`INTERPRETER_ENABLE_DEFAULT = True`,
+  `config_manifest.py:72`) — §7 리스크의 "기본값에서 꺼져 있을 가능성이 높다"는 전제가 틀렸다.
+  다만 결론(현재는 안전)은 유지된다: PTC 허용목록 기본값이 `"safe"`(`{read_file, glob, grep}`만,
+  `config_manifest.py:77`)라 게이트 대상 도구에 안 닿는다. **`interpreter.ptc`가 `"all"`이나
+  게이트 대상 도구명을 포함하도록 바뀌면 PTC가 `wrap_tool_call`을 우회하는 구조**로 보인다
+  (`repl.install_tools`가 `BaseTool`을 REPL에 직접 설치, `langchain_quickjs/middleware.py`).
+  이번 단계에서는 기본값 유지로 충분해 코드는 안 고쳤다. §7 리스크 문구 갱신을 부탁한다.
+
+**계획 문서에 없던 설계 결정 1건 — 검토 부탁**
+
+D4(승인 도구를 에이전트에게 안 줌)와 EC9(같은 run 타임라인에 `plan_approved`가 순서대로
+나와야 함)가 충돌한다 — 승인은 별도 CLI 프로세스에서 일어나서 그 run의 메모리 상태에 접근할
+수 없다. `plan_gate.py`의 `_announce_approved_if_new`로, 에이전트가 승인된 계획을 **처음
+사용하는 시점**(그 계획으로 허용되는 첫 쓰기 직전)에 스스로 `plan_approved`를 기록하도록
+했다 — 상세 근거는 `step3_result.md` "설계 결정 중 계획 문서에 없던 것" 절.
+
+**남은 일 — 👤사람의 TUI 확인 (EC1~EC9)**
+
+`step3_result.md`에 명령·기대 화면 표를 정리해뒀다. WORKFLOW.md §1 규칙대로 이건 사람만
+할 수 있다. 확인되면 표에 결과를 채워달라.
+
+단위 테스트는 `assistant/`쪽 87개 전부 통과, dcode 자신의 `test_agent.py` 202개도 회귀 없음
+확인했다(§6, `step3_result.md`).
+
+→ 응답:
+
 ## ✅ 2026-09-17 · 🟢구현 → 전체 · README 실제 출력 예시 + 버그 1개 추가 발견(`tool_end`)
 
 R-C 이후 README §6 항목4에 `report list`/`show`/`fail`의 **실제 출력**을 넣으면서(`4a79424`),
