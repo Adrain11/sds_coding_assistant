@@ -24,8 +24,13 @@ vendoring된 `libs/` 원본을 직접 읽고 확인한 것. **추정이 아니�
 | S8 | `[tool.uv.sources] deepagents = { path = "../deepagents", editable = true }` — 상대경로 의존이라 `libs/` 구조를 깨면 빌드가 죽는다 | `libs/code/pyproject.toml:213-220` |
 | S9 | 휠 패키지 목록은 `packages = ["deepagents_code"]` — **`assistant/`는 그냥 두면 설치 안 된다** | `libs/code/pyproject.toml:198-207` |
 | S10 | 확장(extension) API로도 미들웨어 등록이 가능하지만 `DEEPAGENTS_CODE_EXPERIMENTAL=1` + 프로젝트 신뢰 프롬프트가 필요 | `libs/code/EXTENSIONS.md:3-5, 110-113` |
+| S11 | 🔴 서버(`langgraph_runtime_inmem`)가 이벤트 루프 스레드의 동기 blocking I/O를 감지하면 예외를 던진다(`--allow-blocking` 미설정 시 기본). `os.mkdir`/`os.getcwd`는 걸린다. `io.*.write`/`threading.Lock.acquire`는 명시적으로 예외 처리돼 안 걸림 | `langgraph_runtime_inmem/queue.py:_enable_blockbuster`(`to_disable` 목록), 2026.09.17 헤드리스 실측(`BlockingError: Blocking call to os.mkdir`/`os.getcwd`) |
+| S12 | 🔴 `contextvars.ContextVar`로 든 "현재 run"이 `before_agent`와 이후 훅(`wrap_tool_call`/`after_agent`) 사이에서 안 이어진다 — 서버가 훅마다 별도 task/context를 쓰는 것으로 보임(공통 조상에서 복사, 이어쓰기 아님). `thread_id`는 같은 조건에서 모든 훅에 동일하게 잡혔다 | 2026.09.17 헤드리스 실측(`_safe()`에 트레이스 삽입, `before_agent`/`awrap_tool_call`/`after_agent` 각각의 `current_run_id()`/`thread_id`를 직접 찍어봄) |
+| S13 | 🔴 서버 프로세스의 `os.getcwd()`는 저장소 루트가 아니라 `/tmp/deepagents_server_<id>/` 샌드박스다. `dcode`가 "프로젝트 루트"로 쓰는 값(F2)은 별도 메커니즘(`get_server_project_context()`, 클라이언트가 서버에 넘긴 값)이라 `os.getcwd()`와 다르다 | `deepagents_code/project_utils.py:get_server_project_context`, `agent.py`의 `_format_execute_description`이 같은 fallback을 씀. 2026.09.17 헤드리스 실측(`EventWriter.__init__`의 실제 `runs_dir` 값 확인) |
 
 **S10의 의미** — PLAN.md가 "훅 대신 소스 배선"을 고른 판단이 소스로 확인됐다. 확장 API를 썼으면 step0에서 문제였던 신뢰 프롬프트가 그대로 돌아온다. **소스 배선이 맞다.**
+
+**S11~S13의 의미 — D1/D2b/D9를 실측으로 다시 썼다.** 계획서의 "ContextVar로 현재 run을 든다"(D1/검토 I3)와 "EventWriter는 파일에만 쓰면 안전하다"(D5)는 소스 리딩만으로는 안 보이던 두 가지를 놓쳤다: 훅 간 컨텍스트 단절(S12)과 서버 프로세스의 실제 cwd(S13). 둘 다 실제 헤드리스 서버 실행 없이는 발견할 수 없었다. `EventWriter`는 이제 `thread_id`로 직접 키를 잡고(S12), 기본 `runs_dir`/`run_start`의 `cwd` 필드는 `get_server_project_context()`로 구한다(S13). 상세 근거는 `assistant/events.py`의 `EventWriter`·`resolve_project_dir` docstring, `docs/plan/INBOX.md`의 09-17 🟢구현 항목.
 
 ### 🔴 먼저 고쳐야 할 것 두 가지
 

@@ -19,6 +19,27 @@
 
 ---
 
+## ✅ 2026-09-17 · 🟢구현 → 전체 · I1-I3 구현 완료 + 실측으로만 잡히는 버그 2개 추가 발견
+
+`events.py`/`observability.py`를 I1-I3(§5 D1·D2b, §4 작업표 8번, §6 T1b·T11-u) 반영해서 다시 썼고,
+실제 헤드리스 `dcode -n`으로 서버까지 직접 돌려 확인했다 (커밋 `49808ff`). 30개 단위 테스트 통과 +
+`runs/<run_id>/events.jsonl`에 `run_start`~`run_end` 8개 이벤트 전부 정상 기록 확인.
+
+**계획서 S11(`os.mkdir` 블록)은 이미 반영돼 있었는데, 실제로 돌려보니 그걸로 안 끝났다:**
+
+| # | 무엇 | 어떻게 잡았나 | 조치 |
+|---|---|---|---|
+| **S12** | `contextvars.ContextVar`가 `before_agent`와 이후 훅(`wrap_tool_call`/`after_agent`) 사이에서 안 이어짐 — dcode 서버가 훅마다 별도 task/context를 쓰는 것으로 보임(공통 조상에서 복사, 이어쓰기가 아님). D1/D2b의 "ContextVar로 현재 run을 든다"는 설계가 헤드리스 실측에서 이벤트가 전부 `None` current로 나와 확인됨 | 헤드리스 실행 + `_safe()`에 임시 트레이스 삽입 | `ContextVar` 제거, `thread_id`(매 훅에서 동일하게 잡힘, 실측 확인)로 직접 키를 잡는 `dict`로 교체. `EventWriter`의 모든 메서드가 `thread_id`를 명시로 받는다 |
+| **S13** | dcode 서버 프로세스의 실제 `os.getcwd()`가 저장소 루트가 아니라 `/tmp/deepagents_server_<id>/` 샌드박스. `Path.cwd()`를 기본 `runs_dir`/`run_start`의 `cwd` 필드에 썼더니 전부 그 temp 경로로 새 나갔다 | 같은 헤드리스 실행에서 `EventWriter.__init__`에 실제 `runs_dir` 값을 찍어봄 | `deepagents_code.project_utils.get_server_project_context()`(agent.py 자신도 이 fallback을 씀)로 저장소 루트를 얻는 `resolve_project_dir()` 추가. `Path.cwd()` 직접 호출 제거 (겸사겸사 S11의 `os.getcwd()` 블로킹도 사라짐) |
+
+STEP2_PLAN.md §0(S12·S13 추가)·§5(D9 갱신)에 반영해뒀다. **DC1~DC6 TUI 실측은 아직 안 했다** —
+헤드리스는 계획서 자체가 증거로 안 친다는 원칙 그대로, 여기서도 "돌아간다"는 확인일 뿐이다.
+👤사람이 TUI에서 한 번 확인해주면 좋겠다 (T3·T5·T9 우선).
+
+→ 응답:
+
+---
+
 ## 🔴 X2. 2026-09-17 · 🔵검토 → 🟣설계 · README를 단계 5에서 **지금으로 당기자**
 
 현재 `README.md`는 **없다**(raw 404). 계획상 단계 5다.
