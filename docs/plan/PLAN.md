@@ -196,7 +196,18 @@ cd libs/code && uv sync && uv run dcode --version
    - ⚠️ 기존 `pep8_gate.py`는 `Write`만 검사해 `edit_file`에 구멍. **파일을 직접 읽어서 검사**하는 방식으로 바꾼다
 3. **내 코드 전부에 docstring** — 채점자가 읽는 건 `assistant/`다
 4. **README 재현 절차** — 항목별 테스트 케이스 4개. 채점자가 그대로 따라 할 수 있게
-5. **깨끗한 환경에서 처음부터 재현** — 다른 디렉터리에 clone해서 README만 보고 실행
+5. 🔴 **제출 ZIP으로 처음부터 재현 — 이 단계의 첫 작업으로 한다** (검토 X3)
+   - ZIP을 만들어 **다른 디렉터리에 풀고**, README만 보고 빌드·실행·테스트 케이스까지 수행
+   - **clone이 아니라 ZIP이어야 한다.** 둘의 내용이 다르다 — `.claude/`·`.agents/skills/`·
+     `CLAUDE.md`·`SKILLS.md`·`skills-lock.json`·`.git/`는 ZIP에서 빼기 때문에
+     (`SUBMISSION_GAP.md` G1), clone 검증은 "ZIP에서 뺀 파일에 의존하는 문제"를 못 잡는다
+   - **패키징 → 풀어서 검증**이 한 쌍이다. 만들기만 하고 안 풀어보면 검증이 아니다
+   - 함께 확인할 것: `.deepagents/`가 들어갔는지(3-1 증거) · `runs/`·`.venv/`·`__pycache__`가
+     **안** 들어갔는지 · `libs/`가 `partners/*`까지 전부인지(S8) · `uv.lock` 포함 여부 결정 ·
+     `docs/plan/` 포함 여부
+   - ⚠️ **1~4번보다 먼저 한다.** 지금 아무도 빌드 절차를 검증하지 않았고, 개발 환경은
+     이미 `uv sync`와 키 설정이 끝나 있어 채점자 상황과 다르다. 맨 끝에 두면
+     마감 직전에 "ZIP이 빌드가 안 된다"를 발견한다
 
 ---
 
