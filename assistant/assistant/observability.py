@@ -166,6 +166,11 @@ class EventLoggerMiddleware(AgentMiddleware):
                 )
             )
 
+        # 검토 P3 backstop: a model call that exhausted its retries without
+        # succeeding never resets EventLoggerInnerMiddleware's attempt count
+        # for this thread — the next turn always starts clean regardless.
+        _safe(lambda: self._ev.reset_attempts(thread_id))
+
         _safe(lambda: self._ev.start_run(thread_id=thread_id))
         _safe(
             lambda: self._ev.record(
@@ -287,15 +292,6 @@ class EventLoggerInnerMiddleware(AgentMiddleware):
         """Args: event_writer: Same shared writer as `EventLoggerMiddleware`."""
         super().__init__()
         self._ev = event_writer
-        self._attempts_by_request: dict[int, int] = {}
-        """1-based attempt count per in-flight logical model call, keyed by
-        `id(request)`. `CodeModelRetryMiddleware`'s retry loop calls
-        `handler(request)` again with the *same* `request` object for each
-        retry (its own `call()` closure captures one `request` per logical
-        call), so identity is a valid correlation key for attempts of the
-        same call. Popped on success; a call that exhausts its retries and
-        is never retried again leaks its entry (bounded by call volume in a
-        single session — acceptable for this project's scope)."""
 
     def wrap_model_call(
         self,
@@ -304,9 +300,7 @@ class EventLoggerInnerMiddleware(AgentMiddleware):
     ) -> ModelResponse[Any]:
         """Time and log one model-call *attempt* (sync graph path)."""
         thread_id = thread_id_from_config()
-        key = id(request)
-        attempt = self._attempts_by_request.get(key, 0) + 1
-        self._attempts_by_request[key] = attempt
+        attempt = self._ev.next_attempt(thread_id)
         _safe(
             lambda: self._ev.record(
                 MODEL_START, thread_id=thread_id, name=_model_name(request), attempt=attempt
@@ -327,7 +321,7 @@ class EventLoggerInnerMiddleware(AgentMiddleware):
                 )
             )
             raise
-        self._attempts_by_request.pop(key, None)
+        self._ev.reset_attempts(thread_id)
         self._log_model_end(thread_id, request, response, start, attempt)
         return response
 
@@ -338,9 +332,7 @@ class EventLoggerInnerMiddleware(AgentMiddleware):
     ) -> ModelResponse[Any]:
         """Time and log one model-call *attempt* (async graph path — S4)."""
         thread_id = thread_id_from_config()
-        key = id(request)
-        attempt = self._attempts_by_request.get(key, 0) + 1
-        self._attempts_by_request[key] = attempt
+        attempt = self._ev.next_attempt(thread_id)
         _safe(
             lambda: self._ev.record(
                 MODEL_START, thread_id=thread_id, name=_model_name(request), attempt=attempt
@@ -361,7 +353,7 @@ class EventLoggerInnerMiddleware(AgentMiddleware):
                 )
             )
             raise
-        self._attempts_by_request.pop(key, None)
+        self._ev.reset_attempts(thread_id)
         self._log_model_end(thread_id, request, response, start, attempt)
         return response
 

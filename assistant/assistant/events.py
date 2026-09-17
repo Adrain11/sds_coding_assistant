@@ -35,6 +35,7 @@ Design constraints (see `docs/plan/STEP2_PLAN.md` §5):
 
 from __future__ import annotations
 
+import atexit
 import datetime as _dt
 import hashlib
 import json
@@ -245,10 +246,45 @@ class EventWriter:
         self._known_dirs: set[str] = set()
         self._runs_lock = threading.Lock()
         self._runs: dict[str, _RunState] = {}
+        self._attempts_lock = threading.Lock()
+        self._attempts: dict[str, int] = {}
         self._worker = threading.Thread(
             target=self._run_worker, name="event-writer", daemon=True
         )
         self._worker.start()
+        atexit.register(self.flush)
+        """검토 P2: `after_agent`'s own `flush()` only covers a normal turn
+        end. A process that dies mid-turn (Ctrl+C, forced TUI exit, or an
+        interrupt that kills the process before the next turn's
+        `before_agent` closes it as `interrupted`) never reaches that call.
+        `atexit` is the backstop for exactly that case."""
+
+    # --- attempt tracking (D2b, 검토 P3) -----------------------------------
+
+    def next_attempt(self, thread_id: str | None = None) -> int:
+        """1-based attempt count for this thread's in-flight model call.
+
+        Keyed by `thread_id`, not `id(request)` (검토 P3): identity-keying
+        leaked and risked `id()` reuse for a call that exhausts its retries
+        without ever calling `reset_attempts` (a stale entry could then be
+        inherited by an unrelated later `ModelRequest` reusing that address).
+        `thread_id` cannot be reused this way, and a stale count left behind
+        by a permanent failure is bounded by the next turn's `before_agent`
+        calling `reset_attempts` unconditionally.
+        """
+        key = thread_id or _DEFAULT_KEY
+        with self._attempts_lock:
+            attempt = self._attempts.get(key, 0) + 1
+            self._attempts[key] = attempt
+        return attempt
+
+    def reset_attempts(self, thread_id: str | None = None) -> None:
+        """Clear this thread's attempt counter (call on success, and on
+        every `before_agent` as a turn-boundary backstop for a call that
+        exhausted its retries without succeeding)."""
+        key = thread_id or _DEFAULT_KEY
+        with self._attempts_lock:
+            self._attempts.pop(key, None)
 
     # --- run lifecycle ----------------------------------------------------
 
