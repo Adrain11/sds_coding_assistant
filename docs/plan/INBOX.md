@@ -19,6 +19,124 @@
 
 ---
 
+## ✅ 2026-09-17 · 👤사람 → 전체 · TUI 실측 결과 — DC1·DC2·DC5·DC6 **통과**
+
+환경: WSL Ubuntu, `~/sds_coding_assistant`, `uv run --project libs/code dcode -a coding-assistant`
+모델: `openrouter:deepseek/deepseek-v4.1-flash` · 승인 모드 `auto`
+
+| | 확인 방법 | 결과 |
+|---|---|---|
+| **DC1** | `dcode config path` | ✅ `project hooks.json` → `/home/ubuntu/sds_coding_assistant/.deepagents/hooks.json`. 나머지는 전역 경로(정상) |
+| **DC2** | TUI에서 "README.md 읽어줘" → `runs/20260917-151612-01a0ae01/events.jsonl` | ✅ `run_start` → `model_start`/`model_end` ×3 → `tool_start`/`tool_end` ×2 → `run_end`. 누락 없음 (읽기 작업이라 `code_changed` 없는 것이 맞다) |
+| **DC5 ①** | `chmod 500 runs/` 후 TUI 작업 | ✅ TUI 정상 응답, 화면에 오류 없음 |
+| **DC5 ②** | `rm -rf runs/ && chmod 500 .` 후 TUI 작업 (디렉터리 **생성** 차단 — 검토 C3가 짚은 진짜 실패 경로) | ✅ TUI 정상 응답. 이후 `ls -d runs` → 없음 = 생성이 실제로 막힌 상태였음이 확인됨 |
+| **DC6** | 위 전 과정의 화면 | ✅ 로거 출력이 한 글자도 안 섞임 |
+
+**남은 완료조건은 전부 `report.py`에 달려 있다** — DC3(타임라인·소요), DC4(실패 지점),
+DC7(재시도 지표), DC8(계층형 trace).
+
+🟢구현: `step2_result.md`에 위 표를 그대로 옮겨 실측 근거로 삼아라.
+
+---
+
+## 🔴 2026-09-17 · 🟣설계 → 🟢구현 (cc 🔵검토) · 단계 2 코드 검토 — 미완 1건 + 결함 2건
+
+`assistant/assistant/events.py`, `observability.py`를 읽었다.
+**S11~S13은 좋은 발견이다.** `ContextVar`가 훅 사이에서 안 이어진다는 것과 서버 프로세스 cwd가
+`/tmp` 샌드박스라는 것은 **실행해보지 않으면 못 찾는다.** 계획(I3)을 실측이 뒤집은 정당한 사례이고,
+기록으로 남긴 것도 맞다. 이벤트 쓰기를 백그라운드 스레드로 뺀 것도 옳다 —
+dcode 서버가 이벤트 루프에서 동기 I/O를 막는다.
+
+아래는 고칠 것.
+
+### 🔴 P1. 단계 2는 아직 끝나지 않았다 — `report.py`가 없다
+
+작업표 10번이 남아 있다. 이게 없으면 **완료조건 넷이 통째로 증명 불가**다:
+
+| | 없으면 | 채점 |
+|---|---|---|
+| DC3 | 타임라인·총 소요를 볼 수단이 없다 | 4-1 |
+| DC4 | 실패 지점 조회가 없다 | **4-4 (2점)** |
+| DC7 | 재시도 지표 집계가 없다 | **4-3 (2점)** |
+| DC8 | 계층형 trace 뷰가 없다 | **4-4의 "Trace" 문구** |
+
+`events.jsonl`은 **증거의 재료**이지 증거가 아니다. 채점자는 JSON을 직접 읽지 않는다.
+**항목 4의 10점 중 4점이 `report.py` 하나에 걸려 있다.** 다음 작업은 이것이다.
+
+### 🔴 P2. 데몬 스레드 + `atexit` 없음 → `run_end`가 유실될 수 있다
+
+```python
+self._worker = threading.Thread(target=self._run_worker, name="event-writer", daemon=True)
+```
+
+`flush()`는 만들어뒀는데 **아무도 부르지 않는다.** 데몬 스레드는 인터프리터 종료 시
+큐를 비우지 않고 그냥 죽는다. TUI를 끄거나 Ctrl+C로 나가면 **마지막 이벤트 —
+`run_end`와 `run_result` — 가 파일에 안 남을 수 있다.**
+
+이건 4-1의 "**최종 결과**"에 직결되고, DC2("`run_start`~`run_end`가 전부 있다")를
+간헐적으로 실패하게 만든다. 간헐적 실패는 원인을 찾기도 어렵다.
+
+**고치는 법 (둘 다 넣는다)**
+1. `close_run()`에서 `run_end`를 넣은 직후 **`flush()` 호출.** 턴마다 join 한 번이라 비용이 거의 없고,
+   턴이 끝나는 시점에 그 run의 파일이 완결된다는 보장이 생긴다.
+2. `EventWriter.__init__`에서 `atexit.register(self.flush)` — 비정상 종료 대비.
+
+### 🔴 P3. `id(request)`로 attempt를 세는 건 위험하다 — DC7이 조용히 틀릴 수 있다
+
+```python
+self._attempts_by_request: dict[int, int] = {}
+key = id(request)
+attempt = self._attempts_by_request.get(key, 0) + 1
+```
+
+세 가지 문제가 겹친다.
+
+1. **전제가 검증되지 않았다.** 이 코드는 `CodeModelRetryMiddleware`가 attempt마다 **같은
+   request 객체를 재사용**한다고 가정한다. 모델을 바꿔 재시도하는 경로에서 새 객체를 만들면
+   attempt가 영원히 1이다. → **R2가 잡으려던 바로 그 구멍이 형태만 바꿔 되살아난다.**
+2. **`id()`는 재사용된다.** 파이썬은 객체가 GC되면 같은 주소를 다시 쓴다.
+3. **실패 경로에서 `pop`이 안 된다.** 삭제가 "성공 후"에만 있어서, 예외가 밖으로 나가면
+   항목이 남는다. 누수 + 2번과 겹치면 다음 요청이 `attempt=2`로 시작한다.
+
+**권하는 해법 — attempt를 기록 시점에 세지 말고 `report.py`에서 파생시킨다.**
+
+안쪽 로거는 `model_start`/`model_end`를 **그냥 매번 쓴다**(상태 없음).
+한 run 안에서 `model_end(status=ok)` 사이에 낀 `model_start` 개수가 곧 attempt 수다.
+데이터에 이미 들어 있는 정보라 따로 셀 이유가 없다.
+
+이렇게 하면 `_attempts_by_request` 딕셔너리와 위 세 문제가 **한꺼번에 사라진다.**
+상태를 안 들고 있는 게 이 자리에서는 더 안전하다.
+
+> 그래도 이벤트에 `attempt` 필드를 남기고 싶으면, `id(request)` 대신
+> **`thread_id`별 카운터**를 쓰고 `model_end(ok)`와 `run_start`에서 리셋한다.
+> 다만 위 방식이 더 단순하다.
+
+### 🟡 P4. 확인 요청 2개
+
+- **T11-u가 실제로 있나?** 단위 테스트 30개 통과라고 했는데, `CodeModelRetryMiddleware`를
+  스택에 끼워 429를 두 번 던지는 테스트가 그 안에 있는지. **DC7의 1차 증거가 이것이다.**
+  없으면 P3을 고치면서 같이 만들어라.
+- **`get_server_project_context()`는 dcode 내부 API다.** 우리 코드가 여기 의존한다는 걸
+  `STEP2_PLAN.md` §7 리스크에 한 줄 남겨라 — dcode 버전이 바뀌면 여기서 깨진다.
+  그리고 이 경로가 **채점자 환경에서도 같게 동작하는지**는 DC2에서 확인해야 한다.
+
+### 참고 — `abefore_agent`/`aafter_agent`가 없는 건 문제 아니다
+
+SDK 자신의 `PatchToolCallsMiddleware`(`middleware/patch_tool_calls.py:17`)도 sync
+`before_agent`만 정의하고 정상 동작한다. 헤드리스에서 `run_start`~`run_end`가 다 찍힌 것이
+그 증거다. **다만 TUI에서도 같은지는 DC2에서 확인한다.**
+
+### 다음 순서
+
+1. 🟢구현 — P2 · P3 수정 → `report.py`(P1) → `step2_result.md`
+2. 👤사람 — **지금 바로 가능한 TUI 확인: DC1 · DC2 · DC5 · DC6.**
+   DC3 · DC4 · DC7 · DC8은 `report.py`가 나온 뒤.
+3. 🔵검토 — `report.py`까지 나오면 코드 대조
+
+→ 응답:
+
+---
+
 ## 🔴 2026-09-17 · 🟣설계 → 🟢구현 (cc 🔵검토) · README 초안 검토 — 9건
 
 전체 구조와 밀도는 좋다. 특히 `uv` 강제 경고(1절), `--extra all-providers`(2절),

@@ -21,8 +21,14 @@
 | 4 — 메모리·자기개선 | ⬜ 계획 미작성 | — |
 | 5 — PEP8 + README + 최종 | ⬜ 계획 미작성 | — |
 
+**단계 2 완료조건 현황** (09.17 TUI 실측, INBOX 참조)
+
+| ✅ 통과 | ⏳ `report.py` 대기 |
+|---|---|
+| DC1 프로젝트 루트 · DC2 이벤트 흐름 · DC5 fail-open(①②) · DC6 화면 오염 없음 | DC3 타임라인 · DC4 실패 지점 · DC7 재시도 지표 · DC8 계층형 trace |
+
 **지금 열려 있는 것**
-- 🟢 구현: 리뷰 반영본으로 계속 — **D2b(안쪽 로거)와 D7(새 이벤트 타입)이 `events.py`를 바꾼다**
+- 🟢 구현: **P2(flush/atexit) · P3(`id(request)` 제거) → `report.py`(P1) → `step2_result.md`.** README 검토 N1·N2도
 - 🟣 설계: 단계 3 계획 착수
 - 👤 사람: PyPI `assistant` 이름 확인 (검토 R4), 강사 확인 — `docs/`를 ZIP에 포함해도 되는지 (검토 G1)
 
