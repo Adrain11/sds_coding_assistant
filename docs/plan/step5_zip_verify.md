@@ -98,6 +98,24 @@ uv run --project libs/code pytest tests/ -q                       # ✅ 87 passe
 전부 통과. `assistant/` 쪽 단위 테스트(87개)가 원본 저장소가 아닌, ZIP에서 막 풀어낸 사본에서도
 그대로 통과한다는 것까지 확인했다.
 
+## 6. 작업 2(ruff 설정) 이후 재검증 (2026.09.18)
+
+작업 2에서 저장소 루트에 `ruff.toml`이 새로 생겼다(`docs/plan/step5_ruff_docstrings.md`).
+포함 목록에 추가하고, ZIP을 다시 만들어 **또 새 디렉터리**에 풀고 전체를 반복했다:
+
+```bash
+uv sync --project libs/code --extra all-providers --group test   # ✅
+uv run --project libs/code dcode --version                        # ✅ deepagents-code 0.1.69
+uv run --project libs/code dcode config path                      # ✅ project hooks.json이 새 디렉터리를 가리킴
+uv run --project libs/code pytest tests/ -q                       # ✅ 87 passed
+uv run --project libs/code ruff check assistant/ tests/            # ✅ All checks passed!
+uv run --project libs/code ruff format assistant/ tests/ --check   # ✅ 11 files already formatted
+```
+
+전부 통과. 최종 ZIP 최상위 항목: `.deepagents .env.example README.md assistant docs libs
+ruff.toml tests` — 지시된 제외 목록(`.claude`·`.agents`·`CLAUDE.md`·`SKILLS.md`·
+`skills-lock.json`·`.git`) 전부 없음, 지시된 포함 목록 전부 있음.
+
 ## 5. 결정 사항 (기록)
 
 - **`uv.lock`은 ZIP에 안 넣는다.** 지시된 포함 목록에 없었고, 이번 검증에서 lock 없이도
