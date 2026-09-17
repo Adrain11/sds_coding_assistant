@@ -9,9 +9,11 @@ Design constraints (see `docs/plan/STEP2_PLAN.md` §5):
   declared here (as strings only) so `report.py` does not need to change
   when Step 3/4 start emitting them.
 
-This module does not swallow errors itself (no fail-open here). Whether a
-write failure should be silently ignored is the caller's decision — see
-`assistant/observability.py` (D4).
+`EventWriter.record()` never touches the filesystem itself (D9): it only
+enqueues, so it has nothing to raise. The background writer thread it starts
+does the actual I/O and swallows its own failures (logged at debug level) —
+see the `EventWriter` docstring for why the write path had to move off the
+caller's thread.
 """
 
 from __future__ import annotations
@@ -19,6 +21,8 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import json
+import logging
+import queue
 import re
 import secrets
 import threading
@@ -27,6 +31,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+logger = logging.getLogger(__name__)
 
 # --- Event types (D7) --------------------------------------------------
 
@@ -116,31 +122,117 @@ def _now_iso() -> str:
 # --- Writer -----------------------------------------------------------
 
 
+_WORKER_IDLE_TIMEOUT_SECONDS = 0.5
+"""How long the writer thread waits for the next event before exiting.
+
+Not a daemon thread: a headless one-shot run (`dcode -n`) was observed to
+exit the whole process within microseconds of the last hook call, killing a
+daemon thread before it ever got scheduled — `runs/` was never even created.
+A plain (non-daemon) thread makes Python's interpreter-shutdown join() wait
+for it, but only a *bounded* wait: without this idle timeout the thread would
+block on `queue.get()` forever and hang every exit, since nothing signals
+"no more events are coming" for a single-run writer. In measured practice
+one `record()` call reaches disk in well under 50ms, so this bound is a
+safety margin, not the expected case.
+"""
+
+
 class EventWriter:
     """Appends one JSON object per line to `runs/<run_id>/events.jsonl`.
 
-    One instance corresponds to one run (one user turn). Concurrent calls to
-    `record()` from parallel tool calls are safe: a lock serializes sequence
-    numbering and the file append.
+    One instance corresponds to one run (one user turn). `record()` only
+    enqueues (pure in-memory work, no I/O) — a dedicated background thread
+    does the actual `mkdir`/write.
+
+    D9 (`docs/plan/STEP2_PLAN.md` §5): dcode's server runs hooks on its
+    asyncio event loop thread and raises if that thread makes a *synchronous*
+    blocking call (`os.mkdir`, confirmed by a real headless run — see S11).
+    Plain file `write()` is explicitly exempted by that same guard, but
+    `mkdir()` is not, so directory creation cannot happen on the calling
+    thread. Moving all I/O to one dedicated thread sidesteps this
+    entirely and, as a side effect, removing the earlier per-call lock:
+    a single consumer thread already serializes writes.
     """
 
     def __init__(self, runs_dir: Path, thread_id: str | None = None) -> None:
-        """Create the run directory and open a writer for it.
+        """Start the run's writer thread.
 
         Args:
             runs_dir: Root log directory (repo `runs/`).
             thread_id: Conversation thread id, when available.
 
-        Raises:
-            OSError: If `runs_dir` cannot be created (e.g. read-only). The
-                caller decides whether to swallow this (D4).
+        Note:
+            Never raises for a bad `runs_dir` (e.g. read-only) — that failure
+            surfaces inside the background thread instead, which logs it at
+            debug level and drops events for this run. `record()` stays a
+            cheap, non-blocking enqueue either way (D4/D5/D9).
         """
         self.run_id = _new_run_id(thread_id)
         self.run_dir = runs_dir / self.run_id
         self.path = self.run_dir / "events.jsonl"
-        self._lock = threading.Lock()
         self._seq = 0
-        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self._seq_lock = threading.Lock()
+        self._queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
+        self._worker = threading.Thread(
+            target=self._run_worker,
+            name=f"event-writer-{self.run_id}",
+            daemon=False,
+        )
+        self._worker.start()
+
+    def _run_worker(self) -> None:
+        """Background loop: create the run dir once, then drain the queue.
+
+        Runs off the event loop thread, so the blocking calls here are safe.
+        A failure (e.g. read-only `runs/`) is logged once and the queue is
+        drained without writing, so `record()` callers never block on a full
+        queue. Every dequeued item (written, dropped, or a sentinel) is
+        marked done so `flush()` can use `Queue.join()`. Exits after
+        `_WORKER_IDLE_TIMEOUT_SECONDS` of silence — see that constant.
+        """
+        try:
+            self.run_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            logger.debug("EventWriter: could not create run directory", exc_info=True)
+            self._drain_without_writing()
+            return
+
+        while True:
+            try:
+                entry = self._queue.get(timeout=_WORKER_IDLE_TIMEOUT_SECONDS)
+            except queue.Empty:
+                return  # idle: this run's writer has nothing left to do
+            try:
+                if entry is None:  # shutdown sentinel
+                    return
+                try:
+                    line = json.dumps(entry, ensure_ascii=False)
+                    with self.path.open("a", encoding="utf-8") as f:
+                        f.write(line + "\n")
+                except OSError:
+                    logger.debug("EventWriter: dropped one event line", exc_info=True)
+            finally:
+                self._queue.task_done()
+
+    def _drain_without_writing(self) -> None:
+        while True:
+            try:
+                entry = self._queue.get(timeout=_WORKER_IDLE_TIMEOUT_SECONDS)
+            except queue.Empty:
+                return
+            try:
+                if entry is None:
+                    return
+            finally:
+                self._queue.task_done()
+
+    def flush(self) -> None:
+        """Block until every event enqueued so far has been written or dropped.
+
+        A test/verification helper. Production callers don't need it — D9
+        treats a short persistence delay after the last event as acceptable.
+        """
+        self._queue.join()
 
     def record(
         self,
@@ -152,7 +244,7 @@ class EventWriter:
         error: str | None = None,
         data: dict[str, Any] | None = None,
     ) -> None:
-        """Append one event line.
+        """Enqueue one event line; the background thread writes it.
 
         Args:
             event_type: One of the constants above.
@@ -162,9 +254,8 @@ class EventWriter:
             error: Error message (truncated like any other string field).
             data: Extra structured payload; redacted before writing.
 
-        Raises:
-            OSError: If the append write fails. Not swallowed here — see
-                the module docstring.
+        This method itself never touches the filesystem, so it has nothing
+        to raise for the caller to swallow (contrast with the pre-D9 design).
         """
         entry: dict[str, Any] = {"ts": _now_iso(), "run_id": self.run_id, "type": event_type}
         if name is not None:
@@ -178,12 +269,10 @@ class EventWriter:
         if data is not None:
             entry["data"] = redact(data)
 
-        with self._lock:
+        with self._seq_lock:
             self._seq += 1
             entry["seq"] = self._seq
-            line = json.dumps(entry, ensure_ascii=False)
-            with self.path.open("a", encoding="utf-8") as f:
-                f.write(line + "\n")
+        self._queue.put(entry)
 
 
 # --- Reader (shared by report.py) --------------------------------------

@@ -27,6 +27,7 @@ def test_concurrent_writes_all_valid_and_sequenced(tmp_path: Path) -> None:
 
     with cf.ThreadPoolExecutor(max_workers=16) as pool:
         list(pool.map(write_one, range(100)))
+    writer.flush()
 
     lines = writer.path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 100
@@ -55,6 +56,15 @@ def test_redact_masks_sensitive_keys() -> None:
     assert result["api_key"] == "***"
     assert result["PASSWORD"] == "***"
     assert result["secret_token"] == "***"
+
+
+def test_redact_does_not_mask_plural_token_count_fields() -> None:
+    """Regression: D6's `token` rule must not catch D7's own `*_tokens` metrics."""
+    data = {"input_tokens": 10, "output_tokens": 5, "auth_token": "should-be-masked"}
+    result = redact(data)
+    assert result["input_tokens"] == 10
+    assert result["output_tokens"] == 5
+    assert result["auth_token"] == "***"
 
 
 def test_redact_hashes_content_and_command_fields() -> None:
@@ -99,6 +109,7 @@ def test_record_writes_expected_fields(tmp_path: Path) -> None:
     writer.record(
         TOOL_END, name="read_file", status="ok", dur_ms=12.5, data={"file_path": "a.py"}
     )
+    writer.flush()
     (line,) = writer.path.read_text(encoding="utf-8").splitlines()
     event = json.loads(line)
 

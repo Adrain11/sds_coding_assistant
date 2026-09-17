@@ -154,6 +154,7 @@ PLAN.md 단계 1 표의 이식 대상(`.agents/skills/` 8종, `.claude/skills/`,
 - [ ] **DC5** 로그 디렉터리를 읽기 전용으로 만들어도 **TUI가 죽지 않는다** (로거는 fail-open — 아래 §5 D4)
 - [ ] **DC6** TUI 화면에 로거가 만든 출력이 **한 글자도 섞이지 않는다**
 - [ ] **DC7** 🔴 모델 호출이 재시도된 요청에서 `report`에 **attempt별 기록**이 남고 재시도 횟수가 1 이상으로 집계된다 (검토 R2 — 이게 없으면 4-3의 "재시도"가 증거 없음)
+  - 🔴 **1차 증거는 단위 테스트(T11-u)다.** 재시도 대상은 `_RETRYABLE_STATUS_CODES = {408, 409, 429}` + 5xx뿐이라(`model_retry.py:92`), **잘못된 모델명(404)이나 잘못된 키(401)로는 재시도가 안 일어난다** (검토 I1). 이 유일한 예외 — 사람이 TUI에서 확인할 수 없는 완료조건 — 대신 채점자도 `pytest`로 재현할 수 있다
 - [ ] **DC8** `report show`가 **계층형 trace 뷰**로 나온다 (4-4의 "Trace" 문구 충족, 검토 G5)
 
 ## 4. 수정·생성 대상 파일과 작업 순서 (2-2)
@@ -169,7 +170,7 @@ PLAN.md 단계 1 표의 이식 대상(`.agents/skills/` 8종, `.claude/skills/`,
 | 5 | `assistant/events.py` | 신규 | `EventWriter` — run_id 발급, jsonl append, 민감정보 절삭, **이벤트 타입 상수 전체(D7)** | 45분 |
 | 6 | `tests/test_events.py` | 신규 | 동시 쓰기·절삭·미종료 run 단위 테스트 | 30분 |
 | 7 | `assistant/observability.py` | 신규 | `EventLoggerMiddleware`(바깥) + **`EventLoggerInnerMiddleware`(안쪽, D2b)**. 각각 sync/async 훅 | 75분 |
-| 8 | `libs/code/deepagents_code/agent.py` | **수정 (2곳)** | ① `agent_middleware` **맨 앞**에 `EventLoggerMiddleware()` ② `create_deep_agent` 직전 **맨 끝**에 `EventLoggerInnerMiddleware()` — 같은 `EventWriter` 공유 | 15분 |
+| 8 | `libs/code/deepagents_code/agent.py` | **수정 (3곳 3줄)** | ⓪ `_ev = EventWriter()` 생성 ① `agent_middleware` **맨 앞**에 `EventLoggerMiddleware(_ev)` ② `create_deep_agent` 직전 **맨 끝**에 `EventLoggerInnerMiddleware(_ev)` (검토 I2) | 15분 |
 | 9 | — | 확인만 | **T3 실측** — 도구 호출이 실제로 잡히는지. 여기서 갈린다 | 20분 |
 | 10 | `assistant/report.py` | 신규 | `list` / `show`(계층형 trace + 하단 지표) / `fail` / `stats`(지표 함수 래퍼) | 75분 |
 | 11 | `tests/test_report.py` | 신규 | 고정 jsonl 픽스처로 출력 검증 | 20분 |
@@ -183,13 +184,21 @@ PLAN.md 단계 1 표의 이식 대상(`.agents/skills/` 8종, `.claude/skills/`,
 > 커밋 타임스탬프와 모순되지 않는다. (검토 R3)
 > **5번의 `events.py`는 D7의 새 타입과 D2b 때문에 다시 손봐야 한다.**
 
-**8번이 dcode 원본을 건드리는 유일한 곳.** 각각 import 1줄 + insert 1줄, 총 2곳. 그 이상 늘어나면 설계가 틀린 것이다.
+**8번이 dcode 원본을 건드리는 유일한 곳.** import 1줄 + 생성 1줄 + insert 2줄. 그 이상 늘어나면 설계가 틀린 것이다.
 
 ## 5. 설계 결정과 근거
 
 **D1. run 단위 = 사용자 요청 1개 (turn)**
 `before_agent`에서 run 시작, `after_agent`에서 종료. 4-1의 "전체 실행 흐름"이 요청 단위로 깔끔하고, 4-4의 "실패 지점"도 요청 단위로 짚힌다. 출력은 `runs/<run_id>/events.jsonl`.
 `run_id` = `{시각 YYYYMMDD-HHMMSS}-{thread_id 앞 8자}`. thread_id를 못 구하면 랜덤 8자로 떨어진다(죽지 않는다).
+
+> 🔴 **현재 run은 `contextvars.ContextVar`로 들고 간다** *(2026.09.17 추가, 검토 I3 — 구조에 박히는 결정)*
+> 바깥 로거가 `before_agent`에서 run을 열고, 안쪽 로거(D2b)는 `wrap_model_call`에서 "지금 어느 run인지"를
+> 알아야 한다. `EventWriter`에 `self.current_run_id` 같은 **평범한 속성**으로 들고 있으면
+> **병렬 도구 호출과 서브에이전트에서 run이 섞인다.** `model_start`가 엉뚱한 run에 붙으면
+> 4-1·4-3이 통째로 신뢰를 잃는다.
+> `ContextVar`는 async 태스크마다 독립적으로 상속되므로 이 경합이 구조적으로 사라진다.
+> **나중에 고치면 `EventWriter`를 다시 뜯어야 하므로 처음부터 이렇게 만든다.**
 
 **D2. 바깥 로거 — `agent_middleware` 맨 앞**
 custom 리스트 안에서 앞쪽일수록 바깥(S2). `ShellAllowList`·`AutoModeHITL`·`ServerHooks`가 모두 이 리스트의 뒤쪽이므로, **다른 미들웨어가 차단한 도구 호출도 우리 로그에 잡힌다** — 단계 3의 계획 게이트 차단을 기록하려면 이게 필수다. `before_agent`는 제일 먼저, `after_agent`는 역순이라 제일 나중에 불린다. run 경계로 딱 맞다.
@@ -211,6 +220,17 @@ custom 리스트 안에서 앞쪽일수록 바깥(S2). `ShellAllowList`·`AutoMo
 |---|---|
 | 바깥 `EventLoggerMiddleware` | `run_start`/`run_end`, `tool_*`, `code_changed`, (단계 3) `gate_block` |
 | 안쪽 `EventLoggerInnerMiddleware` | `model_start`/`model_end`/`model_error` — **attempt 단위**. `attempt` 필드 포함 |
+
+**`EventWriter`는 생성자 주입으로 공유한다** *(검토 I2)* — 모듈 전역 싱글턴은 쓰지 않는다.
+테스트에서 격리가 안 되고(T3-u가 writer를 일부러 터뜨려야 한다), 서브에이전트·병렬 실행에서 상태가 섞인다.
+배선은 **2곳이 아니라 3곳 3줄**이다:
+
+```python
+_ev = EventWriter()                                        # ⓪ 공유 인스턴스 생성
+agent_middleware = [EventLoggerMiddleware(_ev), ...]       # ① 맨 앞  (바깥)
+...
+agent_middleware.append(EventLoggerInnerMiddleware(_ev))   # ② 맨 끝  (안쪽)
+```
 
 > **"배선은 한 곳" 원칙과 부딪히는 것에 대해** — 원칙을 굽힌다. 그 원칙의 목적은 남의 소스를
 > 최소한만 건드려 되돌리기 쉽게 하는 것이지 숫자 1을 지키는 게 아니다. 두 곳 모두
@@ -307,7 +327,9 @@ S9 때문에 그냥 두면 설치가 안 된다. `[tool.uv.sources]`에 editable
 | **T1** | `EventWriter`에 100줄을 동시에 쓰면 100줄이 전부 유효 JSON으로 파싱된다 (async 병렬 도구 호출 대비) |
 | **T2** | 절삭 규칙: 300자 문자열 → 200자 + 꼬리표. `api_key` 키 → `***`. `content` → 길이+해시 |
 | **T3-u** | 훅 안에서 `EventWriter`가 예외를 던져도 미들웨어가 예외를 밖으로 내보내지 않고 `handler` 결과를 그대로 반환한다 (D4) |
+| **T1b** | 🔴 서로 다른 run 2개를 **async로 동시에** 열고 각각 이벤트를 쓴 뒤, 두 `events.jsonl`에 상대 run의 이벤트가 **한 줄도 섞이지 않는다** (D1의 `ContextVar`, 검토 I3). T1은 동시 *쓰기*만 보고 이 경합은 못 본다 |
 | **T4-u** | `run_end`가 없는 jsonl을 `report`가 크래시 없이 "미종료"로 표시한다 |
+| **T11-u** | 🔴 **DC7의 1차 증거.** `CodeModelRetryMiddleware` + `EventLoggerInnerMiddleware`를 스택으로 조립하고 handler가 429(또는 503)를 **두 번** 던지게 한다 → `model_start`/`model_end`가 attempt 단위로 **3쌍** 남는다 (검토 I1) |
 
 ### TUI 실측 (증거는 전부 여기서)
 | | 절차 | 기대 |
@@ -319,7 +341,7 @@ S9 때문에 그냥 두면 설치가 안 된다. `[tool.uv.sources]`에 editable
 | **T8** | 요청 중 Ctrl+C → `report list` | 해당 run이 "미종료"로 표시, 크래시 없음 |
 | **T9** | ① `chmod 500 runs/` ② **`runs/`를 지우고 저장소 루트를 읽기전용으로** 만든 뒤 TUI 작업 | 둘 다 **TUI 정상 동작**, 로그만 안 남음 (DC5). ②가 진짜 실패 경로다 — `before_agent`가 처음 하는 일이 `runs/<run_id>/` **생성**이라, 디렉터리를 만들 수 없는 경우가 fail-open이 깨지는 지점이다 (검토 C3) |
 | **T10** | 위 전 과정 동안 화면 | 로거 출력 섞임 없음 (DC6) |
-| **T11** | 🔴 재시도를 유발한다 — 잘못된 모델명이나 일시적으로 끊긴 키로 1회 실패시킨 뒤 `report show` | `attempt=2/3` 같은 표기가 나오고 지표에 **재시도 1회 이상** 집계 (DC7, 검토 R2) |
+| **T11** | 🔴 재시도 유발. ~~잘못된 모델명·키~~ → **꼭 필요하면** 요청 도중 프록시/네트워크를 잠깐 끊어 httpx 전송 오류를 낸다 (`model_retry.py:450`) | `attempt=2/3` 표기 + 지표에 **재시도 1회 이상** (DC7). **1차 증거는 T11-u 단위 테스트다** |
 | **T12** | `report show <run_id>` 출력 형태 | 계층형 trace + 하단 지표 (DC8) |
 
 ## 7. 리스크

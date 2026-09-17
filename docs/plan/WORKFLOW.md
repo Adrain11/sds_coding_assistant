@@ -16,17 +16,23 @@
 | 0 — TUI 첫 확인 | ✅ 완료 (09.16) | `docs/plan/step0_tui_result.md` |
 | 1 — 소스 vendoring + 빌드 | ✅ 완료 (09.17) | `libs/`, 빌드 통과 (`--extra openrouter`) |
 | 1-a — 이식 (skills·설정) | ✅ 완료 (09.17) | `.agents/`, `.claude/`, `.deepagents/`, `SKILLS.md` |
-| **2 — 이벤트 로거** | 🔵 **진행 중** | 계획 `docs/plan/STEP2_PLAN.md` · 리뷰 대기 |
+| **2 — 이벤트 로거** | 🔵 **진행 중** | 계획 `STEP2_PLAN.md` · 리뷰 `STEP2_REVIEW.md`·`submission_gap.md` 완료 · 반영 `STEP2_REVIEW_RESPONSE.md` · 구현 중 |
 | 3 — 계획 게이트 | ⬜ 계획 미작성 | — |
 | 4 — 메모리·자기개선 | ⬜ 계획 미작성 | — |
 | 5 — PEP8 + README + 최종 | ⬜ 계획 미작성 | — |
 
 **지금 열려 있는 것**
-- 다른 Opus: STEP2_PLAN.md 리뷰 → `docs/plan/STEP2_REVIEW.md`
-- VS Code: STEP2_PLAN.md §8의 2번부터 구현
-- Cowork Opus: 리뷰 반영 후 단계 3 계획 착수
+- 🟢 구현: 리뷰 반영본으로 계속 — **D2b(안쪽 로거)와 D7(새 이벤트 타입)이 `events.py`를 바꾼다**
+- 🟣 설계: 단계 3 계획 착수
+- 👤 사람: PyPI `assistant` 이름 확인 (검토 R4), 강사 확인 — `docs/`를 ZIP에 포함해도 되는지 (검토 G1)
 
-**남은 시간** 09.17(목) 오후 + 09.18(금) 하루
+**단계 3·4·5 계획은 축소하지 않는다.** 채점 2-2가 "구체적인 계획"을 요구하므로 줄이는 것이 직접 감점이고,
+기간이 09.20까지라 시간도 있다. (검토 G2)
+
+**제출 기한** 2026.09.20(일) 23:59:59 · **형식** ZIP 파일 (GitHub 링크 아님) · **닉네임** 제출, 성함 금지
+
+> 🔴 **ZIP에는 "dcode 실행에 필요한 소스코드만"** 넣는다. 안내문이 `.claude/skills` 등을 명시적으로 금지했다.
+> 제외 목록은 `STEP2_PLAN.md` §0-B 참조. 저장소에는 그대로 두고, **ZIP 만들 때** 뺀다.
 
 ---
 
@@ -61,7 +67,7 @@
 - 단계 결과를 `docs/plan/step*_result.md`에 기록 (실패도 기록)
 - **하지 않는 것** — 계획서 범위 밖 작업. 필요하면 먼저 물어본다
 
-### 사람(김)
+### 👤 사람 (운영)
 - 환경 사이의 전달, 커밋·푸시
 - **TUI 완료 조건 확인** — 이건 사람만 할 수 있다
 - 범위 변경 승인
@@ -76,7 +82,31 @@
 |---|---|
 | GitHub `main` | ✅ **원본** |
 | WSL `~/sds_coding_assistant` | 작업 사본 — 커밋·푸시로 원본에 반영 |
-| Windows `05_프로젝트\` | Cowork Opus의 초안 출력 자리. 반드시 `docs/plan/`으로 복사해야 원본이 된다 |
+| Windows `05_프로젝트\` | 🟣설계의 초안 출력 자리. 반드시 `docs/plan/`으로 복사해야 원본이 된다 |
+
+### 📬 `docs/plan/INBOX.md` — 환경 사이의 메시지 보드
+
+세 환경은 서로를 못 본다. **짧은 용건(질문·사실 정정·제안·진행 알림)은 INBOX로 남긴다.**
+일을 시작할 때 **나에게 온 🔴열림 항목을 먼저 확인**한다. 처리했으면 상태를 `✅ 처리됨`으로 바꾸고
+본문은 지우지 않는다 — 누가 뭘 언제 받았는지가 남아야 §6 인계가 된다.
+
+**단계별 정식 리뷰는 INBOX에 쓰지 않는다.** `STEP<N>_REVIEW.md`로 간다 — 채점 2-3의 증거물이라
+잡담과 섞이면 증거로서 약해진다.
+
+### `docs/plan/` 문서 지도
+
+| 파일 | 무엇 |
+|---|---|
+| `WORKFLOW.md` | **여기서 시작한다.** 역할·진행 상태·규칙 |
+| `INBOX.md` | 환경 사이 메시지 |
+| `PLAN.md` | 전체 계획 + **채점 기준 16항목 (§1)** |
+| `STEP<N>_PLAN.md` | 단계별 계획 |
+| `STEP<N>_REVIEW.md` | 🔵검토의 정식 리뷰 |
+| `STEP<N>_REVIEW_RESPONSE.md` | 🟣설계의 반영 판정 (**채점 2-3 증거**) |
+| `step<N>_result.md` | 🟢구현의 결과 기록 |
+| `submission_gap.md` | 공식 제출 안내 vs 계획 대조 |
+| `step0_tui_result.md` | TUI 첫 실측 |
+| `REVIEW_PROMPT.md` | 🔵검토용 지시서 |
 
 ### 문서 동기화
 Cowork Opus가 Windows 폴더에 계획서를 쓰면, 사람이 옮긴다:
@@ -100,9 +130,12 @@ https://raw.githubusercontent.com/Adrain11/sds_coding_assistant/main/docs/plan/<
 
 ## 3. 각 환경 시작 프롬프트
 
+> 세 프롬프트 모두 **`docs/plan/INBOX.md`에서 나에게 온 🔴열림 항목 확인**으로 시작한다.
+
 ### 🟢 VS Code
 ```
-docs/plan/WORKFLOW.md 와 docs/plan/STEP<N>_PLAN.md 를 읽어라.
+docs/plan/WORKFLOW.md, docs/plan/INBOX.md, docs/plan/STEP<N>_PLAN.md 를 읽어라.
+INBOX에 🟢구현 앞으로 온 🔴열림 항목이 있으면 그것부터 처리해라.
 
 규칙:
 1. 계획서 §4의 작업 순서표를 그대로 따른다. 번호를 건너뛰지 않는다.
@@ -120,7 +153,8 @@ docs/plan/WORKFLOW.md 와 docs/plan/STEP<N>_PLAN.md 를 읽어라.
 너는 리뷰어다. 코드를 쓰거나 파일을 고치지 마라.
 
 대상: https://raw.githubusercontent.com/Adrain11/sds_coding_assistant/main/docs/plan/STEP<N>_PLAN.md
-배경: 같은 경로의 PLAN.md, step0_tui_result.md, WORKFLOW.md
+배경: 같은 경로의 PLAN.md, step0_tui_result.md, WORKFLOW.md, INBOX.md
+(INBOX에 🔵검토 앞으로 온 🔴열림 항목이 있으면 그것부터)
 소스: https://github.com/Adrain11/sds_coding_assistant (공개, main)
 
 평가 기준은 PLAN.md §1의 채점 4항목이다.
@@ -143,17 +177,20 @@ docs/plan/WORKFLOW.md 와 docs/plan/STEP<N>_PLAN.md 를 읽어라.
 확신 없으면 "확인 필요"로 표시하고 어떻게 확인하는지 써라.
 ```
 
-### 🟣 Cowork Opus
+### 🟣 설계 (Cowork Opus)
 ```
-github.com/Adrain11/sds_coding_assistant 의 docs/plan/ 을 보고 이어서 하자.
+github.com/Adrain11/sds_coding_assistant 의 docs/plan/WORKFLOW.md 와 INBOX.md 부터
+읽고 이어서 하자. INBOX에 🟣설계 앞으로 온 🔴열림 항목이 있으면 그것부터.
 ```
 
 ---
 
 ## 4. 한 단계를 도는 순서
 
+각 환경은 **자기 차례를 시작할 때 `INBOX.md`에서 자기 앞으로 온 🔴열림 항목을 먼저 본다.**
+
 ```
-[🟣 Cowork]  계획서 작성 → Windows 폴더
+[🟣 설계]    계획서 작성 → Windows 폴더
      ↓  사람이 docs/plan/ 으로 복사·커밋·푸시
 [🔵 Opus]    리뷰 → STEP<N>_REVIEW.md → 커밋
      ↓
@@ -195,10 +232,11 @@ WORKFLOW.md §0의 현재 상태에서 다음 할 일을 찾아서 시작해라.
 
 **인계가 되려면 §0이 최신이어야 한다.** 그게 이 문서를 매 단계 갱신하는 이유다.
 
-> ⚠️ **검토가 설계를 겸하면 리뷰의 독립성이 사라진다.** 자기가 쓴 계획을 자기가 리뷰하는 꼴이라
-> 채점 2-3("AI 리뷰 후 반영")의 증거로 약해진다.
-> 그 상황이 오면 **리뷰 역할은 🟢 구현(Sonnet)에게 넘긴다.** 다른 모델이고, 코드를 직접 만져본
-> 입장이라 오히려 실전적인 지적이 나온다.
+> ⚠️ **인계 후에는 리뷰를 같은 대화창에서 하지 않는다.**
+> 독립성을 만드는 것은 계정이 아니라 **맥락**이다. 계획을 쓴 그 대화창에서 같은 계획을 리뷰하면
+> 자기 논리 안에 갇혀서, 채점 2-3("AI 리뷰 후 반영")의 증거로 약해진다.
+> → 리뷰할 때는 **새 대화창을 열고** GitHub의 계획서만 읽혀서 시킨다. 빈 맥락에서 시작하므로
+> 독립성이 거의 회복된다. (같은 계정이어도 된다.)
 
 ---
 
