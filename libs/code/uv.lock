@@ -229,6 +229,11 @@ wheels = [
 ]
 
 [[package]]
+name = "assistant"
+version = "0.1.0"
+source = { editable = "../../assistant" }
+
+[[package]]
 name = "attrs"
 version = "26.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1026,6 +1031,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
     { name = "anyio" },
+    { name = "assistant" },
     { name = "deepagents" },
     { name = "deepagents-acp" },
     { name = "filelock" },
@@ -1204,6 +1210,7 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'nvidia'", specifier = ">=3.14.3,<3.15.0" },
     { name = "aiosqlite", specifier = ">=0.22.1,<1.0.0" },
     { name = "anyio", specifier = ">=4.14.2,<5.0.0" },
+    { name = "assistant", editable = "../../assistant" },
     { name = "av", marker = "extra == 'media'", specifier = ">=18.0.0,<19.0.0" },
     { name = "deepagents", editable = "../deepagents" },
     { name = "deepagents-acp", editable = "../acp" },
