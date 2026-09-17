@@ -13,10 +13,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
-
 from assistant.events import EventWriter, iter_events
 from assistant.observability import EventLoggerInnerMiddleware, EventLoggerMiddleware
+from langchain_core.messages import AIMessage, HumanMessage
 
 
 class _FakeToolMessage:
@@ -80,7 +79,9 @@ def test_wrap_tool_call_records_start_end_and_code_changed(tmp_path: Path) -> No
     run_id = ev.current_run_id()
 
     request = _tool_request("write_file", {"file_path": "a.py"})
-    result = mw.wrap_tool_call(request, lambda _req: _FakeToolMessage(content="wrote 3 lines"))
+    result = mw.wrap_tool_call(
+        request, lambda _req: _FakeToolMessage(content="wrote 3 lines")
+    )
 
     assert isinstance(result, _FakeToolMessage)
     events = [e for e in _events(ev, run_id) if e["type"] != "run_start"]
@@ -95,17 +96,21 @@ def test_wrap_tool_call_read_only_tool_has_no_code_changed(tmp_path: Path) -> No
     mw.before_agent({"messages": []}, runtime=None)
     run_id = ev.current_run_id()
 
-    mw.wrap_tool_call(_tool_request("read_file"), lambda _req: _FakeToolMessage(content="x"))
+    mw.wrap_tool_call(
+        _tool_request("read_file"), lambda _req: _FakeToolMessage(content="x")
+    )
     events = [e for e in _events(ev, run_id) if e["type"] != "run_start"]
     assert [e["type"] for e in events] == ["tool_start", "tool_end"]
 
 
 def test_wrap_tool_call_captures_error_content_without_raising(tmp_path: Path) -> None:
-    """Regression: a tool that fails by *returning* status="error" (no
-    exception — e.g. read_file on a missing path) must still carry a
-    human-readable `error` field. A real TUI run showed `tool_end
-    status=error` with no `error` text at all — only `result_len` — because
-    `_tool_call_result_summary` never looked at `content` for the reason.
+    """A tool that fails by *returning* status="error" still needs an error field.
+
+    No exception involved — e.g. read_file on a missing path — but the
+    result must still carry a human-readable `error` field. A real TUI run
+    showed `tool_end status=error` with no `error` text at all — only
+    `result_len` — because `_tool_call_result_summary` never looked at
+    `content` for the reason.
     """
     ev = EventWriter(tmp_path)
     mw = EventLoggerMiddleware(ev)
@@ -114,10 +119,14 @@ def test_wrap_tool_call_captures_error_content_without_raising(tmp_path: Path) -
 
     result = mw.wrap_tool_call(
         _tool_request("read_file", {"file_path": "missing.txt"}),
-        lambda _req: _FakeToolMessage(status="error", content="Error: file not found: missing.txt"),
+        lambda _req: _FakeToolMessage(
+            status="error", content="Error: file not found: missing.txt"
+        ),
     )
 
-    assert isinstance(result, _FakeToolMessage)  # not raised — this is the ToolMessage path
+    assert isinstance(
+        result, _FakeToolMessage
+    )  # not raised — this is the ToolMessage path
     events = [e for e in _events(ev, run_id) if e["type"] == "tool_end"]
     assert events[0]["status"] == "error"
     assert events[0]["error"] == "Error: file not found: missing.txt"
@@ -133,7 +142,9 @@ def test_wrap_tool_call_records_error_and_reraises(tmp_path: Path) -> None:
         raise FileNotFoundError("no such file: missing.txt")
 
     with pytest.raises(FileNotFoundError):
-        mw.wrap_tool_call(_tool_request("read_file", {"file_path": "missing.txt"}), _boom)
+        mw.wrap_tool_call(
+            _tool_request("read_file", {"file_path": "missing.txt"}), _boom
+        )
 
     events = _events(ev, run_id)
     tool_end = next(e for e in events if e["type"] == "tool_end")
@@ -159,7 +170,9 @@ async def test_awrap_tool_call_records_start_and_end(tmp_path: Path) -> None:
 # --- model calls (inner middleware) -----------------------------------
 
 
-def test_inner_wrap_model_call_records_tokens_and_requested_tools(tmp_path: Path) -> None:
+def test_inner_wrap_model_call_records_tokens_and_requested_tools(
+    tmp_path: Path,
+) -> None:
     ev = EventWriter(tmp_path)
     outer = EventLoggerMiddleware(ev)
     inner = EventLoggerInnerMiddleware(ev)
@@ -205,13 +218,17 @@ def test_inner_wrap_model_call_records_error_and_reraises(tmp_path: Path) -> Non
 # --- T11-u: DC7's primary evidence — attempt-level retry logging ---------
 
 
-def test_retry_logging_produces_one_pair_per_attempt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`CodeModelRetryMiddleware` stacked *outside* `EventLoggerInnerMiddleware`
-    must produce 3 `model_start`/`model_end` pairs (one per attempt) for a
-    call that fails twice with a retryable error before succeeding — this is
-    DC7's primary evidence (검토 I1: 401/404 are not retryable, so a TUI
-    reproduction via a bad model name/key does not work; a real `httpx`
-    transient error does, and this test simulates exactly that class).
+def test_retry_logging_produces_one_pair_per_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retried model call must log one `model_start`/`model_end` pair per attempt.
+
+    `CodeModelRetryMiddleware` stacked *outside* `EventLoggerInnerMiddleware`
+    must produce 3 such pairs for a call that fails twice with a retryable
+    error before succeeding — this is DC7's primary evidence (검토 I1:
+    401/404 are not retryable, so a TUI reproduction via a bad model
+    name/key does not work; a real `httpx` transient error does, and this
+    test simulates exactly that class).
     """
     from deepagents_code import model_retry
 
@@ -265,7 +282,9 @@ def test_logging_failure_is_swallowed_tool_call_still_succeeds(
 
     monkeypatch.setattr(EventWriter, "record", _raise)
 
-    result = mw.wrap_tool_call(_tool_request(), lambda _req: _FakeToolMessage(content="ok"))
+    result = mw.wrap_tool_call(
+        _tool_request(), lambda _req: _FakeToolMessage(content="ok")
+    )
     assert isinstance(result, _FakeToolMessage)  # handler's result still returned
 
 
@@ -288,8 +307,10 @@ def test_logging_failure_is_swallowed_run_boundary_still_works(
 
 
 def test_unwritable_runs_dir_does_not_crash_or_hang(tmp_path: Path) -> None:
-    """Regression for S11: `mkdir` happens on the background thread, so an
-    unwritable `runs/` must be absorbed there (T9/DC5), not on the caller.
+    """An unwritable `runs/` must be absorbed on the background thread.
+
+    Regression for S11: `mkdir` happens there, so this must never surface
+    to the caller (T9/DC5).
     """
     runs_dir = tmp_path / "runs"
     runs_dir.mkdir(mode=0o500)  # read-only: the run subdirectory can't be created
@@ -299,7 +320,9 @@ def test_unwritable_runs_dir_does_not_crash_or_hang(tmp_path: Path) -> None:
         mw.before_agent({"messages": []}, runtime=None)  # must not raise or hang
         run_id = ev.current_run_id()
 
-        result = mw.wrap_tool_call(_tool_request(), lambda _req: _FakeToolMessage(content="ok"))
+        result = mw.wrap_tool_call(
+            _tool_request(), lambda _req: _FakeToolMessage(content="ok")
+        )
         assert isinstance(result, _FakeToolMessage)
 
         mw.after_agent({"messages": []}, runtime=None)  # must not raise or hang

@@ -77,7 +77,9 @@ def _safe(action: Callable[[], None]) -> None:
     try:
         action()
     except Exception:  # noqa: BLE001 - logging must never break the agent
-        logger.debug("assistant.observability: swallowed logging failure", exc_info=True)
+        logger.debug(
+            "assistant.observability: swallowed logging failure", exc_info=True
+        )
 
 
 def thread_id_from_config() -> str | None:
@@ -165,7 +167,9 @@ class EventLoggerMiddleware(AgentMiddleware):
 
     # --- run boundary -------------------------------------------------
 
-    def before_agent(self, state: AgentState[Any], runtime: Runtime[Any]) -> dict[str, Any] | None:
+    def before_agent(
+        self, state: AgentState[Any], runtime: Runtime[Any]
+    ) -> dict[str, Any] | None:
         """Start a new run, closing a previous one left open by an interrupt."""
         thread_id = thread_id_from_config()
 
@@ -173,7 +177,9 @@ class EventLoggerMiddleware(AgentMiddleware):
             # §7 risk: after_agent does not fire across a HITL interrupt.
             _safe(
                 lambda: self._ev.close_run(
-                    status="interrupted", extra={"reason": "next_run_started"}, thread_id=thread_id
+                    status="interrupted",
+                    extra={"reason": "next_run_started"},
+                    thread_id=thread_id,
                 )
             )
 
@@ -196,7 +202,9 @@ class EventLoggerMiddleware(AgentMiddleware):
         )
         return None
 
-    def after_agent(self, state: AgentState[Any], runtime: Runtime[Any]) -> dict[str, Any] | None:  # noqa: ARG002
+    def after_agent(
+        self, state: AgentState[Any], runtime: Runtime[Any]
+    ) -> dict[str, Any] | None:  # noqa: ARG002
         """Close the run started by `before_agent`."""
         thread_id = thread_id_from_config()
         _safe(lambda: self._ev.close_run(status="ok", thread_id=thread_id))
@@ -215,13 +223,19 @@ class EventLoggerMiddleware(AgentMiddleware):
         name = request.tool_call.get("name", "unknown")
         _safe(
             lambda: self._ev.record(
-                TOOL_START, thread_id=thread_id, name=name, data={"args": request.tool_call.get("args", {})}
+                TOOL_START,
+                thread_id=thread_id,
+                name=name,
+                data={"args": request.tool_call.get("args", {})},
             )
         )
         start = time.monotonic()
         try:
             result = handler(request)
         except Exception as exc:
+            # Computed eagerly: `except ... as exc` deletes `exc` once this
+            # block exits, but the lambda below only runs *inside* it via `_safe`.
+            error = f"{type(exc).__name__}: {exc}"
             _safe(
                 lambda: self._ev.record(
                     TOOL_END,
@@ -229,7 +243,7 @@ class EventLoggerMiddleware(AgentMiddleware):
                     name=name,
                     status="error",
                     dur_ms=(time.monotonic() - start) * 1000,
-                    error=f"{type(exc).__name__}: {exc}",
+                    error=error,
                 )
             )
             raise
@@ -246,13 +260,19 @@ class EventLoggerMiddleware(AgentMiddleware):
         name = request.tool_call.get("name", "unknown")
         _safe(
             lambda: self._ev.record(
-                TOOL_START, thread_id=thread_id, name=name, data={"args": request.tool_call.get("args", {})}
+                TOOL_START,
+                thread_id=thread_id,
+                name=name,
+                data={"args": request.tool_call.get("args", {})},
             )
         )
         start = time.monotonic()
         try:
             result = await handler(request)
         except Exception as exc:
+            # Computed eagerly: `except ... as exc` deletes `exc` once this
+            # block exits, but the lambda below only runs *inside* it via `_safe`.
+            error = f"{type(exc).__name__}: {exc}"
             _safe(
                 lambda: self._ev.record(
                     TOOL_END,
@@ -260,14 +280,16 @@ class EventLoggerMiddleware(AgentMiddleware):
                     name=name,
                     status="error",
                     dur_ms=(time.monotonic() - start) * 1000,
-                    error=f"{type(exc).__name__}: {exc}",
+                    error=error,
                 )
             )
             raise
         self._log_tool_end(thread_id, name, result, start)
         return result
 
-    def _log_tool_end(self, thread_id: str | None, name: str, result: object, start: float) -> None:
+    def _log_tool_end(
+        self, thread_id: str | None, name: str, result: object, start: float
+    ) -> None:
         def _build() -> dict[str, Any]:
             summary = _tool_call_result_summary(result)
             return {
@@ -282,7 +304,9 @@ class EventLoggerMiddleware(AgentMiddleware):
             kwargs = _build()
             self._ev.record(TOOL_END, thread_id=thread_id, **kwargs)
             if name in _WRITE_TOOL_NAMES and kwargs["status"] == "success":
-                self._ev.record(CODE_CHANGED, thread_id=thread_id, name=name, data=kwargs["data"])
+                self._ev.record(
+                    CODE_CHANGED, thread_id=thread_id, name=name, data=kwargs["data"]
+                )
 
         _safe(_write)
 
@@ -315,13 +339,19 @@ class EventLoggerInnerMiddleware(AgentMiddleware):
         attempt = self._ev.next_attempt(thread_id)
         _safe(
             lambda: self._ev.record(
-                MODEL_START, thread_id=thread_id, name=_model_name(request), attempt=attempt
+                MODEL_START,
+                thread_id=thread_id,
+                name=_model_name(request),
+                attempt=attempt,
             )
         )
         start = time.monotonic()
         try:
             response = handler(request)
         except Exception as exc:
+            # Computed eagerly: `except ... as exc` deletes `exc` once this
+            # block exits, but the lambda below only runs *inside* it via `_safe`.
+            error = f"{type(exc).__name__}: {exc}"
             _safe(
                 lambda: self._ev.record(
                     MODEL_ERROR,
@@ -330,7 +360,7 @@ class EventLoggerInnerMiddleware(AgentMiddleware):
                     name=_model_name(request),
                     attempt=attempt,
                     dur_ms=(time.monotonic() - start) * 1000,
-                    error=f"{type(exc).__name__}: {exc}",
+                    error=error,
                 )
             )
             raise
@@ -348,13 +378,19 @@ class EventLoggerInnerMiddleware(AgentMiddleware):
         attempt = self._ev.next_attempt(thread_id)
         _safe(
             lambda: self._ev.record(
-                MODEL_START, thread_id=thread_id, name=_model_name(request), attempt=attempt
+                MODEL_START,
+                thread_id=thread_id,
+                name=_model_name(request),
+                attempt=attempt,
             )
         )
         start = time.monotonic()
         try:
             response = await handler(request)
         except Exception as exc:
+            # Computed eagerly: `except ... as exc` deletes `exc` once this
+            # block exits, but the lambda below only runs *inside* it via `_safe`.
+            error = f"{type(exc).__name__}: {exc}"
             _safe(
                 lambda: self._ev.record(
                     MODEL_ERROR,
@@ -363,7 +399,7 @@ class EventLoggerInnerMiddleware(AgentMiddleware):
                     name=_model_name(request),
                     attempt=attempt,
                     dur_ms=(time.monotonic() - start) * 1000,
-                    error=f"{type(exc).__name__}: {exc}",
+                    error=error,
                 )
             )
             raise
@@ -382,7 +418,9 @@ class EventLoggerInnerMiddleware(AgentMiddleware):
         def _build() -> dict[str, Any]:
             ai_message = _response_ai_message(response)
             usage = (
-                getattr(ai_message, "usage_metadata", None) if ai_message is not None else None
+                getattr(ai_message, "usage_metadata", None)
+                if ai_message is not None
+                else None
             )
             tool_names = (
                 [call.get("name") for call in ai_message.tool_calls]

@@ -106,7 +106,10 @@ def _relative_to_project(path: str, project_root: Path) -> str:
 
 def _is_tcb_path(path: str, project_root: Path) -> bool:
     rel = _relative_to_project(path, project_root)
-    return any(rel == prefix.rstrip("/") or rel.startswith(prefix) for prefix in _TCB_PATH_PREFIXES)
+    return any(
+        rel == prefix.rstrip("/") or rel.startswith(prefix)
+        for prefix in _TCB_PATH_PREFIXES
+    )
 
 
 def _path_in_scope(path: str, target_files: list[str], project_root: Path) -> bool:
@@ -129,13 +132,17 @@ def _default_reviewer(plan: Plan) -> str:
     `REVIEW_MODEL` env var names a different one — a cheaper/faster model
     keeps `review_plan` from doubling the cost of every plan (§7 risk).
     """
-    from deepagents_code.config import create_model  # only this module imports dcode internals
+    from deepagents_code.config import (
+        create_model,  # only this module imports dcode internals
+    )
 
     model_spec = os.environ.get("REVIEW_MODEL") or None
     result = create_model(model_spec, bind_preserved_thinking=False)
     prompt = (
-        "당신은 소프트웨어 개발 계획을 검토하는 리뷰어입니다. 아래 계획을 비판적으로 검토하고, "
-        "빠진 것 · 모호한 것 · 리스크를 3~5줄로 지적하세요. 특별한 문제가 없다면 그렇게 말하세요.\n\n"
+        "당신은 소프트웨어 개발 계획을 검토하는 리뷰어입니다. "
+        "아래 계획을 비판적으로 검토하고, "
+        "빠진 것 · 모호한 것 · 리스크를 3~5줄로 지적하세요. "
+        "특별한 문제가 없다면 그렇게 말하세요.\n\n"
         f"제목: {plan.title}\n"
         f"요구사항: {plan.requirements}\n"
         f"범위: {plan.scope}\n"
@@ -149,9 +156,19 @@ def _default_reviewer(plan: Plan) -> str:
     return content if isinstance(content, str) else str(content)
 
 
-def _safe_record(ev: EventWriter, event_type: str, thread_id: str | None, *, name: str, data: dict[str, Any]) -> None:
-    """Fail-open event logging (mirrors `observability._safe` — a failed log
-    write must never itself become the reason a plan/gate action fails)."""
+def _safe_record(
+    ev: EventWriter,
+    event_type: str,
+    thread_id: str | None,
+    *,
+    name: str,
+    data: dict[str, Any],
+) -> None:
+    """Fail-open event logging.
+
+    Mirrors `observability._safe` — a failed log write must never itself
+    become the reason a plan/gate action fails.
+    """
     try:
         ev.record(event_type, thread_id=thread_id, name=name, data=data)
     except Exception:  # noqa: BLE001
@@ -177,6 +194,18 @@ class PlanGateMiddleware(AgentMiddleware):
         project_root: Path | None = None,
         reviewer: Callable[[Plan], str] | None = None,
     ) -> None:
+        """Build the gate and the `PlanStore` it reads and writes.
+
+        Args:
+            event_writer: Shared writer, constructor-injected like
+                `EventLoggerMiddleware` (D2b/검토 I2) — a block still shows
+                up in that run's `events.jsonl` as `gate_block`.
+            project_root: Root directory for `.deepagents/plans/`. Defaults
+                to `resolve_project_dir()`; overridable for tests.
+            reviewer: Callable used by the `review_plan` tool to critique a
+                draft plan. Defaults to `_default_reviewer` (a real model
+                call); overridable so tests never need real credentials.
+        """
         super().__init__()
         self._ev = event_writer
         if project_root is None:
@@ -280,11 +309,16 @@ class PlanGateMiddleware(AgentMiddleware):
             except PlanError as exc:
                 return f"리뷰 실패: {exc}"
             if plan.status != DRAFT:
-                return f"리뷰 거부됨: draft 상태의 계획만 리뷰할 수 있습니다 (현재 상태: {plan.status})"
+                return (
+                    f"리뷰 거부됨: draft 상태의 계획만 리뷰할 수 있습니다 "
+                    f"(현재 상태: {plan.status})"
+                )
             try:
                 note = self._reviewer(plan)
             except Exception as exc:  # noqa: BLE001 - fail-closed, see docstring
-                logger.warning("assistant.plan_gate: reviewer model call failed", exc_info=True)
+                logger.warning(
+                    "assistant.plan_gate: reviewer model call failed", exc_info=True
+                )
                 return (
                     f"리뷰 실패 (모델 호출 오류: {type(exc).__name__}: {exc}). "
                     "계획은 draft 상태로 유지됩니다. 다시 시도하거나 사람에게 알리세요."
@@ -326,7 +360,8 @@ class PlanGateMiddleware(AgentMiddleware):
                 target_files: New target file list, or omit to leave unchanged.
                 steps: New step list, or omit to leave unchanged.
                 test_plan: New test plan, or omit to leave unchanged.
-                allow_subagent: New subagent-delegation flag, or omit to leave unchanged.
+                allow_subagent: New subagent-delegation flag, or omit to leave
+                    unchanged.
 
             Returns:
                 Confirmation, or a rejection if the plan is already `approved`
@@ -346,7 +381,10 @@ class PlanGateMiddleware(AgentMiddleware):
                 store.revise(plan_id, **updates)
             except PlanError as exc:
                 return f"수정 거부됨: {exc}"
-            return f"계획 수정됨 (plan_id={plan_id}, 상태=draft). review_plan으로 다시 리뷰받으세요."
+            return (
+                f"계획 수정됨 (plan_id={plan_id}, 상태=draft). "
+                "review_plan으로 다시 리뷰받으세요."
+            )
 
         @tool
         def get_plan_status(plan_id: str) -> str:
@@ -417,7 +455,10 @@ class PlanGateMiddleware(AgentMiddleware):
     def _check(self, name: str, args: dict[str, Any]) -> str | None:
         """Return a block reason, or `None` to let the call through."""
         if name in _ALWAYS_BLOCKED:
-            return "execute(셸)는 승인 후에도 항상 차단됩니다 — 셸이 열리면 사람만 할 수 있는 승인을 에이전트가 대신할 수 있게 됩니다 (D4)."
+            return (
+                "execute(셸)는 승인 후에도 항상 차단됩니다 — 셸이 열리면 "
+                "사람만 할 수 있는 승인을 에이전트가 대신할 수 있게 됩니다 (D4)."
+            )
 
         if name in _GATED_NO_SCOPE:  # "task"
             approved = self._approved_plans()
@@ -426,7 +467,10 @@ class PlanGateMiddleware(AgentMiddleware):
                     self._announce_approved_if_new(plan)
                     return None
             if approved:
-                return "서브에이전트(task) 위임은 allow_subagent=true로 승인된 계획이 있어야 합니다 (현재 승인된 계획에는 없음)."
+                return (
+                    "서브에이전트(task) 위임은 allow_subagent=true로 승인된 계획이 "
+                    "있어야 합니다 (현재 승인된 계획에는 없음)."
+                )
             return "승인된 계획이 없어 서브에이전트(task)를 막습니다."
 
         if name in _GATED_WITH_SCOPE:  # write_file / edit_file / delete
@@ -434,20 +478,31 @@ class PlanGateMiddleware(AgentMiddleware):
             if not isinstance(path, str) or not path:
                 return "file_path 인자를 확인할 수 없어 차단합니다 (fail-closed)."
             if _is_tcb_path(path, self._project_root):
-                return f"'{path}'는 게이트·로거·테스트·원본 코드(TCB)라 승인된 계획 안에 있어도 고치거나 지울 수 없습니다."
+                return (
+                    f"'{path}'는 게이트·로거·테스트·원본 코드(TCB)라 "
+                    "승인된 계획 안에 있어도 고치거나 지울 수 없습니다."
+                )
 
             approved = self._approved_plans()
-            matching = [p for p in approved if _path_in_scope(path, p.target_files, self._project_root)]
+            matching = [
+                p
+                for p in approved
+                if _path_in_scope(path, p.target_files, self._project_root)
+            ]
             if matching:
                 for plan in matching:
                     self._announce_approved_if_new(plan)
                 return None
             if approved:
                 for plan in approved:
-                    self._store.revert_to_draft(plan.plan_id, reason=f"'{path}' 수정 시도가 target_files 범위 밖")
+                    self._store.revert_to_draft(
+                        plan.plan_id,
+                        reason=f"'{path}' 수정 시도가 target_files 범위 밖",
+                    )
                 return (
                     f"'{path}'는 승인된 계획의 target_files 범위 밖입니다. "
-                    "계획이 draft로 되돌아갔습니다 — 재검토(review_plan)와 재승인이 필요합니다."
+                    "계획이 draft로 되돌아갔습니다 — "
+                    "재검토(review_plan)와 재승인이 필요합니다."
                 )
             return "승인된 계획이 없습니다."
 
@@ -461,8 +516,13 @@ class PlanGateMiddleware(AgentMiddleware):
         try:
             reason = self._check(name, args)
         except Exception as exc:  # noqa: BLE001 - D6: any internal error blocks, never passes
-            logger.warning("assistant.plan_gate: gate check raised; blocking (fail-closed)", exc_info=True)
-            reason = f"게이트 내부 오류로 차단됨(fail-closed): {type(exc).__name__}: {exc}"
+            logger.warning(
+                "assistant.plan_gate: gate check raised; blocking (fail-closed)",
+                exc_info=True,
+            )
+            reason = (
+                f"게이트 내부 오류로 차단됨(fail-closed): {type(exc).__name__}: {exc}"
+            )
         if reason is None:
             return None
         return self._block(request, name, reason)
@@ -477,22 +537,35 @@ class PlanGateMiddleware(AgentMiddleware):
             GATE_BLOCK,
             thread_id_from_config(),
             name=name,
-            data={"status": "error", "reason": reason, "args": request.tool_call.get("args", {})},
+            data={
+                "status": "error",
+                "reason": reason,
+                "args": request.tool_call.get("args", {}),
+            },
         )
         message = (
             f"계획 게이트: {name}이(가) 차단되었습니다.\n"
             f"사유: {reason}\n"
-            "다음: create_plan(...)으로 계획을 만들고 review_plan(...)으로 리뷰를 받으세요.\n"
+            "다음: create_plan(...)으로 계획을 만들고 "
+            "review_plan(...)으로 리뷰를 받으세요.\n"
             "      승인은 사람이 다음 명령으로 합니다:\n"
             "      python -m assistant.plan_gate approve <plan_id>"
         )
-        return LCToolMessage(content=message, name=name, tool_call_id=request.tool_call["id"], status="error")
+        return LCToolMessage(
+            content=message,
+            name=name,
+            tool_call_id=request.tool_call["id"],
+            status="error",
+        )
 
     def _append_gate_log(self, name: str, reason: str) -> None:
-        """Audit line independent of `EventWriter` (D6 — 검토's "차단 사건은
-        로거가 죽어도 남아야 한다"). No `mkdir` here (D9): the directory was
-        already created once in `PlanStore.__init__`."""
-        line = f"{_dt.datetime.now().isoformat(timespec='seconds')} BLOCK {name}: {reason}\n"
+        """Audit line independent of `EventWriter`.
+
+        D6 — 검토's "차단 사건은 로거가 죽어도 남아야 한다". No `mkdir` here
+        (D9): the directory was already created once in `PlanStore.__init__`.
+        """
+        stamp = _dt.datetime.now().isoformat(timespec="seconds")
+        line = f"{stamp} BLOCK {name}: {reason}\n"
         with self._gate_log.open("a", encoding="utf-8") as f:
             f.write(line)
 
@@ -501,6 +574,16 @@ class PlanGateMiddleware(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
     ) -> ToolMessage | Command[Any]:
+        """Block a gated tool call, or pass it through (sync graph path).
+
+        Args:
+            request: The tool call request being processed.
+            handler: The next handler in the middleware chain.
+
+        Returns:
+            An error `ToolMessage` if blocked (S17's pattern — `handler` is
+            never called), otherwise `handler(request)`'s own result.
+        """
         if (rejection := self._validate_tool_call(request)) is not None:
             return rejection
         return handler(request)
@@ -510,6 +593,16 @@ class PlanGateMiddleware(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
     ) -> ToolMessage | Command[Any]:
+        """Block a gated tool call, or pass it through (async graph path — S4).
+
+        Args:
+            request: The tool call request being processed.
+            handler: The next handler in the middleware chain.
+
+        Returns:
+            An error `ToolMessage` if blocked, otherwise `handler(request)`'s
+            own result.
+        """
         if (rejection := self._validate_tool_call(request)) is not None:
             return rejection
         return await handler(request)
@@ -534,6 +627,14 @@ def _print_plan(plan: Plan) -> None:
 
 
 def cmd_list(store: PlanStore) -> int:
+    """Print every known plan's id, status, and title, oldest first.
+
+    Args:
+        store: Plan storage to read from.
+
+    Returns:
+        `0` always — an empty store prints `(no plans yet)`, not an error.
+    """
     ids = store.list_ids()
     if not ids:
         print("(no plans yet)")
@@ -549,6 +650,15 @@ def cmd_list(store: PlanStore) -> int:
 
 
 def cmd_show(store: PlanStore, plan_id: str) -> int:
+    """Print one plan's full content (requirements, scope, target files, ...).
+
+    Args:
+        store: Plan storage to read from.
+        plan_id: The plan to show.
+
+    Returns:
+        `0` on success, `1` if `plan_id` does not exist or its file is corrupt.
+    """
     try:
         plan = store.get(plan_id)
     except PlanError as exc:
@@ -559,6 +669,15 @@ def cmd_show(store: PlanStore, plan_id: str) -> int:
 
 
 def cmd_approve(store: PlanStore, plan_id: str) -> int:
+    """Approve a reviewed plan (D4 — the only place approval can happen).
+
+    Args:
+        store: Plan storage to read from and write to.
+        plan_id: The plan to approve. Must currently be `reviewed`.
+
+    Returns:
+        `0` on success, `1` if the plan is not `reviewed` (EC5) or does not exist.
+    """
     try:
         plan = store.approve(plan_id)
     except PlanError as exc:
@@ -578,12 +697,23 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("list", help="List all plans and their status")
     show_parser = sub.add_parser("show", help="Show one plan's full content")
     show_parser.add_argument("plan_id")
-    approve_parser = sub.add_parser("approve", help="Approve a reviewed plan (human only — D4)")
+    approve_parser = sub.add_parser(
+        "approve", help="Approve a reviewed plan (human only — D4)"
+    )
     approve_parser.add_argument("plan_id")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Entry point for `python -m assistant.plan_gate`.
+
+    Args:
+        argv: Command-line arguments, or `None` to use `sys.argv` (argparse's
+            default).
+
+    Returns:
+        The invoked subcommand's exit code.
+    """
     args = _build_parser().parse_args(argv)
     if args.project_root is not None:
         project_root = args.project_root

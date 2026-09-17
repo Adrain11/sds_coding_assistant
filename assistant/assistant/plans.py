@@ -1,4 +1,6 @@
-"""Plan storage and state machine (Step 3 — plan gate, see `docs/plan/STEP3_PLAN.md` §5).
+"""Plan storage and state machine.
+
+Step 3 — plan gate, see `docs/plan/STEP3_PLAN.md` §5.
 
 `Plan`/`PlanStore` hold no tool-calling or middleware logic — that is
 `assistant/plan_gate.py`'s job. This module is the data layer both the
@@ -76,12 +78,17 @@ def _validate_text(name: str, value: object) -> str:
 
 def _validate_str_list(name: str, value: object) -> list[str]:
     if not isinstance(value, list) or not value:
-        msg = f"{name}은(는) 비어 있지 않은 문자열 목록이어야 합니다 (받은 값: {value!r})"
+        msg = (
+            f"{name}은(는) 비어 있지 않은 문자열 목록이어야 합니다 (받은 값: {value!r})"
+        )
         raise PlanError(msg)
     cleaned: list[str] = []
     for item in value:
         if not isinstance(item, str) or not item.strip():
-            msg = f"{name}의 각 항목은 비어 있지 않은 문자열이어야 합니다 (받은 값: {value!r})"
+            msg = (
+                f"{name}의 각 항목은 비어 있지 않은 문자열이어야 합니다 "
+                f"(받은 값: {value!r})"
+            )
             raise PlanError(msg)
         cleaned.append(item)
     return cleaned
@@ -106,10 +113,26 @@ class Plan:
     updated_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
+        """Return this plan's fields as a plain, JSON-serializable dict.
+
+        Returns:
+            A new dict — safe to mutate without affecting this `Plan`.
+        """
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Plan:
+        """Build a `Plan` from a dict produced by `to_dict` (or loaded JSON).
+
+        Args:
+            data: A mapping keyed by this dataclass's field names. Keys not
+                in that set (e.g. from a newer, unknown format) are ignored;
+                a key this dataclass expects but `data` lacks falls back to
+                that field's own default, if it has one.
+
+        Returns:
+            A new `Plan`.
+        """
         known = {f: data[f] for f in cls.__dataclass_fields__ if f in data}  # type: ignore[attr-defined]
         return cls(**known)
 
@@ -126,6 +149,14 @@ class PlanStore:
     """
 
     def __init__(self, project_root: Path) -> None:
+        """Create (if needed) and open `<project_root>/.deepagents/plans/`.
+
+        Args:
+            project_root: Repository root. The agent process and the
+                `python -m assistant.plan_gate` CLI process each construct
+                their own `PlanStore` with the same `project_root`, so they
+                read and write the same files (D4).
+        """
         self._dir = project_root / ".deepagents" / "plans"
         self._dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
@@ -203,7 +234,9 @@ class PlanStore:
         plan.updated_at = time.time()
         path = self._path(plan.plan_id)
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(plan.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.write_text(
+            json.dumps(plan.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         tmp.replace(path)
 
     def list_ids(self) -> list[str]:
@@ -219,7 +252,9 @@ class PlanStore:
         with self._lock:
             plan = self.get(plan_id)
             if plan.status != DRAFT:
-                msg = f"draft 상태의 계획만 리뷰할 수 있습니다 (현재 상태: {plan.status})"
+                msg = (
+                    f"draft 상태의 계획만 리뷰할 수 있습니다 (현재 상태: {plan.status})"
+                )
                 raise PlanError(msg)
             plan.status = REVIEWED
             plan.review_note = note
@@ -230,6 +265,7 @@ class PlanStore:
         """Apply field updates and send the plan back to `draft`.
 
         Args:
+            plan_id: The plan to revise.
             **updates: Any subset of the plan's editable fields; `None`
                 values are ignored (leave that field unchanged).
 
@@ -241,7 +277,10 @@ class PlanStore:
         with self._lock:
             plan = self.get(plan_id)
             if plan.status == APPROVED:
-                msg = "승인된 계획은 수정할 수 없습니다. 새 계획을 만들거나 범위 위반으로 되돌려진 뒤 수정하세요."
+                msg = (
+                    "승인된 계획은 수정할 수 없습니다. "
+                    "새 계획을 만들거나 범위 위반으로 되돌려진 뒤 수정하세요."
+                )
                 raise PlanError(msg)
             for key, value in updates.items():
                 if value is None:
@@ -265,7 +304,10 @@ class PlanStore:
         with self._lock:
             plan = self.get(plan_id)
             if plan.status != REVIEWED:
-                msg = f"reviewed 상태의 계획만 승인할 수 있습니다 (현재 상태: {plan.status}) — review_plan을 먼저 호출하세요"
+                msg = (
+                    f"reviewed 상태의 계획만 승인할 수 있습니다 "
+                    f"(현재 상태: {plan.status}) — review_plan을 먼저 호출하세요"
+                )
                 raise PlanError(msg)
             plan.status = APPROVED
             self._save(plan)

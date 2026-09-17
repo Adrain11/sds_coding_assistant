@@ -12,11 +12,10 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-from langchain_core.messages import ToolMessage
-
 from assistant.events import EventWriter
 from assistant.plan_gate import PlanGateMiddleware
 from assistant.plans import PlanStore
+from langchain_core.messages import ToolMessage
 
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
 
@@ -33,7 +32,9 @@ def _request(name: str, args: dict | None = None, call_id: str = "call_1"):
 
 
 def _ok_handler():
-    return MagicMock(return_value=ToolMessage(content="ok", name="x", tool_call_id="call_1"))
+    return MagicMock(
+        return_value=ToolMessage(content="ok", name="x", tool_call_id="call_1")
+    )
 
 
 def _fake_reviewer(plan):
@@ -48,9 +49,14 @@ def gate(tmp_path):
     ev.flush()
 
 
-def _approve_plan(gate: PlanGateMiddleware, target_files: list[str], *, allow_subagent: bool = False) -> str:
-    """Drive a plan through create -> review -> approve via the store the
-    gate itself uses, so the gate's next `_approved_plans()` scan sees it."""
+def _approve_plan(
+    gate: PlanGateMiddleware, target_files: list[str], *, allow_subagent: bool = False
+) -> str:
+    """Drive a plan through create -> review -> approve.
+
+    Uses the store the gate itself uses, so the gate's next
+    `_approved_plans()` scan sees it.
+    """
     store: PlanStore = gate._store  # noqa: SLF001 - test-only reach-in
     plan = store.create(
         title="테스트 계획입니다 충분히 길게",
@@ -70,25 +76,33 @@ def _approve_plan(gate: PlanGateMiddleware, target_files: list[str], *, allow_su
 class TestNoApprovedPlan:
     def test_u1_write_file_blocked(self, gate):
         handler = _ok_handler()
-        result = gate.wrap_tool_call(_request("write_file", {"file_path": "hello.py"}), handler)
+        result = gate.wrap_tool_call(
+            _request("write_file", {"file_path": "hello.py"}), handler
+        )
         handler.assert_not_called()
         assert result.status == "error"
 
     def test_u2_execute_blocked(self, gate):
         handler = _ok_handler()
-        result = gate.wrap_tool_call(_request("execute", {"command": "touch hello.py"}), handler)
+        result = gate.wrap_tool_call(
+            _request("execute", {"command": "touch hello.py"}), handler
+        )
         handler.assert_not_called()
         assert result.status == "error"
 
     def test_u11_delete_blocked(self, gate):
         handler = _ok_handler()
-        result = gate.wrap_tool_call(_request("delete", {"file_path": "hello.py"}), handler)
+        result = gate.wrap_tool_call(
+            _request("delete", {"file_path": "hello.py"}), handler
+        )
         handler.assert_not_called()
         assert result.status == "error"
 
     def test_u12_task_blocked(self, gate):
         handler = _ok_handler()
-        result = gate.wrap_tool_call(_request("task", {"description": "make a file"}), handler)
+        result = gate.wrap_tool_call(
+            _request("task", {"description": "make a file"}), handler
+        )
         handler.assert_not_called()
         assert result.status == "error"
 
@@ -103,7 +117,9 @@ class TestApprovedInScope:
     def test_u3_write_inside_target_files_allowed(self, gate, tmp_path):
         _approve_plan(gate, target_files=["hello.py"])
         handler = _ok_handler()
-        gate.wrap_tool_call(_request("write_file", {"file_path": str(tmp_path / "hello.py")}), handler)
+        gate.wrap_tool_call(
+            _request("write_file", {"file_path": str(tmp_path / "hello.py")}), handler
+        )
         handler.assert_called_once()
 
     def test_u12_task_allowed_with_allow_subagent(self, gate):
@@ -116,7 +132,9 @@ class TestApprovedInScope:
         """D4/검토 R4: shell never opens, approved plan or not."""
         _approve_plan(gate, target_files=["hello.py"])
         handler = _ok_handler()
-        result = gate.wrap_tool_call(_request("execute", {"command": "echo hi"}), handler)
+        result = gate.wrap_tool_call(
+            _request("execute", {"command": "echo hi"}), handler
+        )
         handler.assert_not_called()
         assert result.status == "error"
 
@@ -139,14 +157,18 @@ class TestTCB:
         tcb_path = str(tmp_path / "assistant" / "assistant" / "plan_gate.py")
         _approve_plan(gate, target_files=[tcb_path])
         handler = _ok_handler()
-        result = gate.wrap_tool_call(_request(tool_name, {"file_path": tcb_path}), handler)
+        result = gate.wrap_tool_call(
+            _request(tool_name, {"file_path": tcb_path}), handler
+        )
         handler.assert_not_called()
         assert result.status == "error"
 
     def test_u7b_tcb_delete_blocked_without_plan(self, gate, tmp_path):
         tcb_path = str(tmp_path / "tests" / "test_plan_gate.py")
         handler = _ok_handler()
-        result = gate.wrap_tool_call(_request("delete", {"file_path": tcb_path}), handler)
+        result = gate.wrap_tool_call(
+            _request("delete", {"file_path": tcb_path}), handler
+        )
         handler.assert_not_called()
         assert result.status == "error"
 
@@ -154,7 +176,9 @@ class TestTCB:
         libs_path = str(tmp_path / "libs" / "code" / "deepagents_code" / "agent.py")
         _approve_plan(gate, target_files=[libs_path])
         handler = _ok_handler()
-        result = gate.wrap_tool_call(_request("edit_file", {"file_path": libs_path}), handler)
+        result = gate.wrap_tool_call(
+            _request("edit_file", {"file_path": libs_path}), handler
+        )
         handler.assert_not_called()
         assert result.status == "error"
 
@@ -165,7 +189,9 @@ class TestFailClosed:
         plan_path = tmp_path / ".deepagents" / "plans" / f"{plan_id}.json"
         plan_path.write_text("{not valid json", encoding="utf-8")
         handler = _ok_handler()
-        result = gate.wrap_tool_call(_request("write_file", {"file_path": str(tmp_path / "hello.py")}), handler)
+        result = gate.wrap_tool_call(
+            _request("write_file", {"file_path": str(tmp_path / "hello.py")}), handler
+        )
         handler.assert_not_called()
         assert result.status == "error"
 
@@ -175,7 +201,9 @@ class TestFailClosed:
 
         monkeypatch.setattr(gate._ev, "record", _boom)  # noqa: SLF001
         handler = _ok_handler()
-        result = gate.wrap_tool_call(_request("write_file", {"file_path": "hello.py"}), handler)
+        result = gate.wrap_tool_call(
+            _request("write_file", {"file_path": "hello.py"}), handler
+        )
         handler.assert_not_called()
         assert result.status == "error"
 
@@ -187,7 +215,9 @@ class TestFailClosed:
 
         monkeypatch.setattr(gate, "_approved_plans", _boom)
         handler = _ok_handler()
-        result = gate.wrap_tool_call(_request("write_file", {"file_path": "hello.py"}), handler)
+        result = gate.wrap_tool_call(
+            _request("write_file", {"file_path": "hello.py"}), handler
+        )
         handler.assert_not_called()
         assert result.status == "error"
         assert "fail-closed" in result.content
@@ -200,7 +230,9 @@ class TestAsyncParity:
 
         handler = MagicMock(side_effect=handler)
         result = asyncio.run(
-            gate.awrap_tool_call(_request("write_file", {"file_path": "hello.py"}), handler)
+            gate.awrap_tool_call(
+                _request("write_file", {"file_path": "hello.py"}), handler
+            )
         )
         handler.assert_not_called()
         assert result.status == "error"
@@ -214,7 +246,8 @@ class TestAsyncParity:
         handler = MagicMock(side_effect=handler)
         asyncio.run(
             gate.awrap_tool_call(
-                _request("write_file", {"file_path": str(tmp_path / "hello.py")}), handler
+                _request("write_file", {"file_path": str(tmp_path / "hello.py")}),
+                handler,
             )
         )
         handler.assert_called_once()

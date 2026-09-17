@@ -1,0 +1,36 @@
+# Root-level ruff config — governs `assistant/` and `tests/` (our own code).
+#
+# `libs/code/pyproject.toml` already has its own `[tool.ruff]` config (with
+# `select = ["ALL"]` and `pydocstyle.convention = "google"`), but ruff never
+# discovers it for files under `assistant/`/`tests/`: config discovery walks
+# *up* from a file's own directory, and `libs/code/` is a sibling of
+# `assistant/`/`tests/`, not an ancestor. With no config anywhere on that
+# upward path, ruff silently fell back to its own built-in default rule set
+# instead of failing loudly — confirmed with `ruff check --show-settings`.
+# This file is what makes `ruff check assistant/ tests/` (run from the repo
+# root) apply the rules this project actually wants.
+extend-exclude = ["libs"]
+# `libs/` is vendored dcode — never ours to fix, and it has its own config
+# anyway. `assistant/`/`tests/` are always linted by explicit path, so this
+# exclude is a safety net against an accidental `ruff check .` from the repo
+# root, not something the normal command below relies on.
+
+[lint]
+select = ["E", "F", "I", "N", "D"]
+# F (pyflakes — unused imports, undefined names) is included even though it
+# wasn't in the original list: ruff's built-in defaults (E4/E7/E9/F) already
+# covered it before this file existed, and dropping it here would be a
+# regression, not an addition.
+extend-select = ["D417"]
+# D417: flags a documented function whose `Args:` section is missing a
+# parameter — the ordinary pydocstyle "D" rules don't check that on their
+# own.
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.per-file-ignores]
+"tests/**" = [
+    "D1",   # Missing docstring — not required on test functions
+    "D417", # Args section — test functions don't need one either
+]

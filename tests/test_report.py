@@ -20,9 +20,20 @@ FIXTURE_EVENTS = [
         "run_id": RUN_ID,
         "seq": 1,
         "type": "run_start",
-        "data": {"user_input": "read a.py, then missing.txt", "thread_id": "t1", "cwd": "/repo"},
+        "data": {
+            "user_input": "read a.py, then missing.txt",
+            "thread_id": "t1",
+            "cwd": "/repo",
+        },
     },
-    {"ts": "...", "run_id": RUN_ID, "seq": 2, "type": "model_start", "name": "m1", "attempt": 1},
+    {
+        "ts": "...",
+        "run_id": RUN_ID,
+        "seq": 2,
+        "type": "model_start",
+        "name": "m1",
+        "attempt": 1,
+    },
     {
         "ts": "...",
         "run_id": RUN_ID,
@@ -34,7 +45,14 @@ FIXTURE_EVENTS = [
         "dur_ms": 100.0,
         "error": "TimeoutError: transient failure",
     },
-    {"ts": "...", "run_id": RUN_ID, "seq": 4, "type": "model_start", "name": "m1", "attempt": 2},
+    {
+        "ts": "...",
+        "run_id": RUN_ID,
+        "seq": 4,
+        "type": "model_start",
+        "name": "m1",
+        "attempt": 2,
+    },
     {
         "ts": "...",
         "run_id": RUN_ID,
@@ -44,7 +62,11 @@ FIXTURE_EVENTS = [
         "status": "success",
         "attempt": 2,
         "dur_ms": 200.0,
-        "data": {"input_tokens": 100, "output_tokens": 10, "requested_tools": ["read_file"]},
+        "data": {
+            "input_tokens": 100,
+            "output_tokens": 10,
+            "requested_tools": ["read_file"],
+        },
     },
     {
         "ts": "...",
@@ -94,7 +116,9 @@ FIXTURE_EVENTS = [
 ]
 
 
-def _write_fixture(runs_dir: Path, run_id: str = RUN_ID, events: list[dict] | None = None) -> None:
+def _write_fixture(
+    runs_dir: Path, run_id: str = RUN_ID, events: list[dict] | None = None
+) -> None:
     run_dir = runs_dir / run_id
     run_dir.mkdir(parents=True)
     lines = [json.dumps(e) for e in (events if events is not None else FIXTURE_EVENTS)]
@@ -144,13 +168,21 @@ def test_cmd_show_renders_trace_and_metrics_footer(tmp_path: Path, capsys) -> No
 
 
 def test_cmd_show_numbers_logical_calls_not_attempts(tmp_path: Path, capsys) -> None:
-    """검토 R-B regression: a retried call must keep one `#N`, and a
-    genuinely separate later call must get the next number — not one per
-    `model_start` (D2b fires one of those per *attempt*, not per call).
+    """A retried call keeps one `#N`; a genuinely later call gets the next.
+
+    검토 R-B regression: `model_start` fires once per *attempt* (D2b), not
+    per call, so numbering must not increment on every one of them.
     """
     events = [
         *FIXTURE_EVENTS[:5],  # run_start .. the retried call's model_end (attempts 1-2)
-        {"ts": "...", "run_id": RUN_ID, "seq": 11, "type": "model_start", "name": "m1", "attempt": 1},
+        {
+            "ts": "...",
+            "run_id": RUN_ID,
+            "seq": 11,
+            "type": "model_start",
+            "name": "m1",
+            "attempt": 1,
+        },
         {
             "ts": "...",
             "run_id": RUN_ID,
@@ -217,15 +249,26 @@ def test_cmd_fail_no_failures(tmp_path: Path, capsys) -> None:
     assert "실패한 이벤트 없음" in capsys.readouterr().out
 
 
-def test_cmd_fail_catches_a_model_error_with_no_tool_failure(tmp_path: Path, capsys) -> None:
-    """검토 R-A regression: a run whose only failure is `model_error` (no
-    `tool_end status=error`) must still be found by `fail`/`_collect_metrics`
-    — this is exactly the "provider died / rate-limited" case, and it was
-    silently invisible before `MODEL_ERROR` carried `status="error"`.
+def test_cmd_fail_catches_a_model_error_with_no_tool_failure(
+    tmp_path: Path, capsys
+) -> None:
+    """A run whose only failure is `model_error` must still be found.
+
+    검토 R-A regression: `fail`/`_collect_metrics` must catch this even with
+    no `tool_end status=error` present — exactly the "provider died /
+    rate-limited" case, silently invisible before `MODEL_ERROR` carried
+    `status="error"`.
     """
     events = [
         FIXTURE_EVENTS[0],  # run_start
-        {"ts": "...", "run_id": "model-fail-run", "seq": 2, "type": "model_start", "name": "m1", "attempt": 1},
+        {
+            "ts": "...",
+            "run_id": "model-fail-run",
+            "seq": 2,
+            "type": "model_start",
+            "name": "m1",
+            "attempt": 1,
+        },
         {
             "ts": "...",
             "run_id": "model-fail-run",
@@ -299,8 +342,10 @@ def test_cmd_list_empty_runs_dir(tmp_path: Path, capsys) -> None:
 
 
 def test_cmd_show_renders_plan_lifecycle_in_order(tmp_path: Path, capsys) -> None:
-    """EC9: `report show` shows `plan_created` -> `plan_reviewed` ->
-    `plan_approved` -> `code_changed` in order, and a block shows up too."""
+    """EC9: the plan lifecycle renders in order, and a block shows up too.
+
+    `plan_created` -> `plan_reviewed` -> `plan_approved` -> `code_changed`.
+    """
     run_id = "20260101-000000-planrun1"
     events = [
         {"ts": "...", "run_id": run_id, "seq": 1, "type": "run_start", "data": {}},

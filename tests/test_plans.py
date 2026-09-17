@@ -9,8 +9,7 @@ from __future__ import annotations
 import json
 
 import pytest
-
-from assistant.plans import DRAFT, APPROVED, REVIEWED, Plan, PlanError, PlanStore
+from assistant.plans import APPROVED, DRAFT, REVIEWED, Plan, PlanError, PlanStore
 
 _VALID = {
     "title": "이벤트 로거에 재시도 지표 추가",
@@ -125,8 +124,10 @@ class TestPersistence:
             store.get("does-not-exist")
 
     def test_corrupted_json_raises_planerror(self, tmp_path):
-        """U8: a broken plan file must fail closed (raise), never crash silently
-        as an approval."""
+        """U8: a broken plan file must fail closed.
+
+        It must raise, never crash silently as an approval.
+        """
         store = PlanStore(tmp_path)
         plan = _create(store)
         path = tmp_path / ".deepagents" / "plans" / f"{plan.plan_id}.json"
@@ -143,9 +144,12 @@ class TestPersistence:
         assert all(not pid.endswith(".tmp") for pid in ids)
 
     def test_two_stores_same_root_see_each_others_writes(self, tmp_path):
-        """The agent process and the CLI process are separate `PlanStore`
+        """A write from one `PlanStore` instance must be visible from another.
+
+        The agent process and the CLI process are separate `PlanStore`
         instances pointed at the same directory — approval in one must be
-        visible to the other (D4)."""
+        visible to the other (D4).
+        """
         writer = PlanStore(tmp_path)
         plan = _create(writer)
         writer.review(plan.plan_id, "note")

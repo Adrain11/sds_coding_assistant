@@ -249,6 +249,19 @@ uv sync --project libs/code --extra all-providers --group test
 uv run --project libs/code pytest tests/
 ```
 
+### 코드 스타일 (ruff)
+
+`assistant/`·`tests/`는 저장소 루트의 `ruff.toml`로 검사한다 — `libs/`(vendoring한 dcode
+원본)는 자기 것(`libs/code/pyproject.toml`)이 따로 있고, 이 설정에서는 명시적으로 제외된다.
+
+```bash
+uv run --project libs/code ruff check assistant/ tests/
+uv run --project libs/code ruff format assistant/ tests/ --check
+```
+
+`E`(pycodestyle)·`F`(pyflakes)·`I`(import 정렬)·`N`(명명 규칙)·`D`(docstring, google
+컨벤션 + `D417` 인자 누락 검사)를 켰다. `tests/**`는 `D1`(docstring 없음 허용)만 예외.
+
 ---
 
 ## 7. 프로젝트 구조

@@ -78,9 +78,12 @@ def test_record_without_open_run_is_a_noop(tmp_path: Path) -> None:
 
 
 def test_record_with_wrong_thread_id_is_a_noop(tmp_path: Path) -> None:
-    """A `record()` for a `thread_id` that never called `start_run` must not
+    """An unregistered `thread_id` must not fall back to another open run.
+
+    A `record()` for a `thread_id` that never called `start_run` must not
     fall back to some *other* open run — that would be exactly the
-    cross-attribution bug thread-id-keying exists to prevent (검토 I3)."""
+    cross-attribution bug thread-id-keying exists to prevent (검토 I3).
+    """
     ev = EventWriter(tmp_path)
     run_id = ev.start_run(thread_id="real-run")
     ev.record(RUN_START, thread_id="someone-elses-thread", name="should-not-land-here")
@@ -173,7 +176,12 @@ def test_record_writes_expected_fields(tmp_path: Path) -> None:
     ev = EventWriter(tmp_path)
     run_id = ev.start_run(thread_id="t1")
     ev.record(
-        TOOL_END, thread_id="t1", name="read_file", status="ok", dur_ms=12.5, data={"file_path": "a.py"}
+        TOOL_END,
+        thread_id="t1",
+        name="read_file",
+        status="ok",
+        dur_ms=12.5,
+        data={"file_path": "a.py"},
     )
     (event,) = _events(ev, run_id)
 
@@ -207,7 +215,8 @@ def test_close_run_records_counters_and_clears_run(tmp_path: Path) -> None:
 def test_iter_events_skips_malformed_trailing_line(tmp_path: Path) -> None:
     path = tmp_path / "events.jsonl"
     path.write_text(
-        '{"type": "run_start", "seq": 1}\n{"type": "tool_start", "seq": 2', encoding="utf-8"
+        '{"type": "run_start", "seq": 1}\n{"type": "tool_start", "seq": 2',
+        encoding="utf-8",
     )
     events = list(iter_events(path))
     assert len(events) == 1

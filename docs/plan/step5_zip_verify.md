@@ -15,8 +15,11 @@
 
 ```bash
 git archive --format=zip --output=/tmp/sds_coding_assistant_submit.zip HEAD -- \
-  README.md docs/plan .deepagents assistant tests libs .env.example
+  README.md docs/plan .deepagents assistant tests libs .env.example ruff.toml
 ```
+
+> `ruff.toml`은 작업 1 당시엔 없었다 — 작업 2(ruff 설정)에서 새로 생긴 저장소 루트 파일이라
+> 뒤늦게 목록에 추가했다. 아래 §6에 작업 2 이후 재검증 결과를 덧붙인다.
 
 | | 포함 여부 | 비고 |
 |---|---|---|

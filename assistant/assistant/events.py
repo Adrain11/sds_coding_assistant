@@ -241,7 +241,9 @@ class EventWriter:
             runs_dir: Root log directory. Defaults to the *project* root's
                 `./runs` — see `_default_runs_dir()`, not a plain `Path.cwd()`.
         """
-        self._runs_dir = runs_dir if runs_dir is not None else resolve_project_dir() / "runs"
+        self._runs_dir = (
+            runs_dir if runs_dir is not None else resolve_project_dir() / "runs"
+        )
         self._queue: queue.Queue[tuple[str, dict[str, Any]] | None] = queue.Queue()
         self._known_dirs: set[str] = set()
         self._runs_lock = threading.Lock()
@@ -279,9 +281,11 @@ class EventWriter:
         return attempt
 
     def reset_attempts(self, thread_id: str | None = None) -> None:
-        """Clear this thread's attempt counter (call on success, and on
-        every `before_agent` as a turn-boundary backstop for a call that
-        exhausted its retries without succeeding)."""
+        """Clear this thread's attempt counter.
+
+        Call on success, and on every `before_agent` as a turn-boundary
+        backstop for a call that exhausted its retries without succeeding.
+        """
         key = thread_id or _DEFAULT_KEY
         with self._attempts_lock:
             self._attempts.pop(key, None)
@@ -307,7 +311,13 @@ class EventWriter:
             state = self._runs.get(key)
         return state.run_id if state is not None else None
 
-    def close_run(self, *, status: str, extra: dict[str, Any] | None = None, thread_id: str | None = None) -> None:
+    def close_run(
+        self,
+        *,
+        status: str,
+        extra: dict[str, Any] | None = None,
+        thread_id: str | None = None,
+    ) -> None:
         """Record `run_end` for this run, then forget it.
 
         Args:
@@ -363,8 +373,14 @@ class EventWriter:
         if state is None:
             return  # no open run to attribute this to (fail-open)
         self._record_for(
-            state, event_type, name=name, status=status, dur_ms=dur_ms, attempt=attempt,
-            error=error, data=data,
+            state,
+            event_type,
+            name=name,
+            status=status,
+            dur_ms=dur_ms,
+            attempt=attempt,
+            error=error,
+            data=data,
         )
 
     def _record_for(
@@ -380,7 +396,11 @@ class EventWriter:
         data: dict[str, Any] | None = None,
     ) -> None:
         limit = _MAX_ERROR_STR_LEN if status == "error" else _MAX_STR_LEN
-        entry: dict[str, Any] = {"ts": _now_iso(), "run_id": state.run_id, "type": event_type}
+        entry: dict[str, Any] = {
+            "ts": _now_iso(),
+            "run_id": state.run_id,
+            "type": event_type,
+        }
         if name is not None:
             entry["name"] = name
         if status is not None:

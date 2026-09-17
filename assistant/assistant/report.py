@@ -61,8 +61,12 @@ def _collect_metrics(events: list[dict[str, Any]]) -> dict[str, Any]:
     retries = sum(1 for e in model_starts if (e.get("attempt") or 1) >= 2)
     errors = sum(1 for e in events if e.get("status") == "error")
     blocks = sum(1 for e in events if e["type"] == GATE_BLOCK)
-    input_tokens = sum((e.get("data") or {}).get("input_tokens") or 0 for e in model_ends)
-    output_tokens = sum((e.get("data") or {}).get("output_tokens") or 0 for e in model_ends)
+    input_tokens = sum(
+        (e.get("data") or {}).get("input_tokens") or 0 for e in model_ends
+    )
+    output_tokens = sum(
+        (e.get("data") or {}).get("output_tokens") or 0 for e in model_ends
+    )
 
     return {
         "model_calls": len(model_starts),
@@ -77,12 +81,17 @@ def _collect_metrics(events: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _format_metrics_line(metrics: dict[str, Any]) -> str:
-    total_s = f"{metrics['total_dur_ms'] / 1000:.1f}s" if metrics["total_dur_ms"] is not None else "미종료"
+    total_s = (
+        f"{metrics['total_dur_ms'] / 1000:.1f}s"
+        if metrics["total_dur_ms"] is not None
+        else "미종료"
+    )
     # "모델 N회(시도)" — `model_calls` counts attempts, not logical calls
     # (검토 R-B): spelling that out here keeps it from being misread as
     # 4-3's separate "재시도 횟수" figure right next to it.
     return (
-        f"지표  모델 {metrics['model_calls']}회(시도) · 도구 {metrics['tool_calls']}회 · "
+        f"지표  모델 {metrics['model_calls']}회(시도) · "
+        f"도구 {metrics['tool_calls']}회 · "
         f"재시도 {metrics['retries']}회 · 차단 {metrics['blocks']}회 · 총 {total_s} · "
         f"토큰 in {metrics['input_tokens']} / out {metrics['output_tokens']}"
     )
@@ -93,7 +102,9 @@ class _Row:
 
     __slots__ = ("detail", "dur_ms", "is_error", "label")
 
-    def __init__(self, label: str, dur_ms: float | None, detail: str, *, is_error: bool) -> None:
+    def __init__(
+        self, label: str, dur_ms: float | None, detail: str, *, is_error: bool
+    ) -> None:
         self.label = label
         self.dur_ms = dur_ms
         self.detail = detail
@@ -130,7 +141,9 @@ def _build_rows(events: list[dict[str, Any]]) -> list[_Row]:
                 label += f"  attempt={attempt}"
             if event_type == "model_end":
                 data = event.get("data") or {}
-                detail = f"in={data.get('input_tokens')} out={data.get('output_tokens')}"
+                detail = (
+                    f"in={data.get('input_tokens')} out={data.get('output_tokens')}"
+                )
                 is_error = False
             else:
                 detail = event.get("error", "")
@@ -140,21 +153,32 @@ def _build_rows(events: list[dict[str, Any]]) -> list[_Row]:
             name = event.get("name", "?")
             is_error = event.get("status") == "error"
             detail = event.get("error", "") if is_error else "ok"
-            rows.append(_Row(f"tool  {name}", event.get("dur_ms"), detail, is_error=is_error))
+            rows.append(
+                _Row(f"tool  {name}", event.get("dur_ms"), detail, is_error=is_error)
+            )
         elif event_type in (PLAN_CREATED, PLAN_REVIEWED, PLAN_APPROVED, CODE_CHANGED):
             rows.append(_Row(*_plan_lifecycle_row(event_type, event), is_error=False))
         elif event_type == GATE_BLOCK:
             data = event.get("data") or {}
             rows.append(
-                _Row(f"gate_block  {event.get('name', '?')}", None, data.get("reason", ""), is_error=True)
+                _Row(
+                    f"gate_block  {event.get('name', '?')}",
+                    None,
+                    data.get("reason", ""),
+                    is_error=True,
+                )
             )
     return rows
 
 
-def _plan_lifecycle_row(event_type: str, event: dict[str, Any]) -> tuple[str, float | None, str]:
-    """Build the (label, dur_ms, detail) triple for one plan-lifecycle event
-    (Step 3, DC9/EC9 — `plan_created`/`plan_reviewed`/`plan_approved`/
-    `code_changed` each get their own single-line row, in file order)."""
+def _plan_lifecycle_row(
+    event_type: str, event: dict[str, Any]
+) -> tuple[str, float | None, str]:
+    """Build the (label, dur_ms, detail) triple for one plan-lifecycle event.
+
+    Step 3, DC9/EC9 — `plan_created`/`plan_reviewed`/`plan_approved`/
+    `code_changed` each get their own single-line row, in file order.
+    """
     data = event.get("data") or {}
     plan_id = data.get("plan_id")
     if event_type == PLAN_CREATED:
@@ -167,8 +191,14 @@ def _plan_lifecycle_row(event_type: str, event: dict[str, Any]) -> tuple[str, fl
     return f"code_changed  {event.get('name', '?')}", event.get("dur_ms"), "-"
 
 
-def _render_trace(run_id: str, events: list[dict[str, Any]], metrics: dict[str, Any]) -> str:
-    total_s = f"{metrics['total_dur_ms'] / 1000:.1f}s" if metrics["total_dur_ms"] is not None else "미종료"
+def _render_trace(
+    run_id: str, events: list[dict[str, Any]], metrics: dict[str, Any]
+) -> str:
+    total_s = (
+        f"{metrics['total_dur_ms'] / 1000:.1f}s"
+        if metrics["total_dur_ms"] is not None
+        else "미종료"
+    )
     lines = [f"run {run_id}   ({total_s}, 실패 {metrics['errors']})"]
 
     rows = _build_rows(events)
@@ -201,7 +231,11 @@ def cmd_list(runs_dir: Path) -> int:
         metrics = _collect_metrics(events)
         run_end = next((e for e in events if e["type"] == "run_end"), None)
         status = run_end.get("status", "ok") if run_end is not None else "미종료"
-        total_s = f"{metrics['total_dur_ms'] / 1000:.1f}s" if metrics["total_dur_ms"] is not None else "-"
+        total_s = (
+            f"{metrics['total_dur_ms'] / 1000:.1f}s"
+            if metrics["total_dur_ms"] is not None
+            else "-"
+        )
         print(f"{run_dir.name}  {status:<12} {total_s:>7}  실패 {metrics['errors']}")
     return 0
 
@@ -232,7 +266,8 @@ def cmd_fail(run_id: str, runs_dir: Path) -> int:
     for idx in failure_indices:
         failure = events[idx]
         start = max(0, idx - _CONTEXT_LINES)
-        print(f"--- seq={failure.get('seq')} {failure['type']} ({failure.get('name', '-')}) ---")
+        name = failure.get("name", "-")
+        print(f"--- seq={failure.get('seq')} {failure['type']} ({name}) ---")
         for e in events[start : idx + 1]:
             marker = ">>" if e is failure else "  "
             print(
@@ -258,11 +293,16 @@ def cmd_stats(run_id: str, runs_dir: Path) -> int:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m assistant.report")
     parser.add_argument(
-        "--runs-dir", type=Path, default=None, help="Defaults to the project root's runs/"
+        "--runs-dir",
+        type=Path,
+        default=None,
+        help="Defaults to the project root's runs/",
     )
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("list", help="List all runs, newest first")
-    show_parser = sub.add_parser("show", help="Timeline + metrics for one run (DC3, DC8)")
+    show_parser = sub.add_parser(
+        "show", help="Timeline + metrics for one run (DC3, DC8)"
+    )
     show_parser.add_argument("run_id")
     fail_parser = sub.add_parser("fail", help="Failures with context for one run (DC4)")
     fail_parser.add_argument("run_id")
@@ -272,8 +312,19 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Entry point for `python -m assistant.report`.
+
+    Args:
+        argv: Command-line arguments, or `None` to use `sys.argv` (argparse's
+            default).
+
+    Returns:
+        The invoked subcommand's exit code.
+    """
     args = _build_parser().parse_args(argv)
-    runs_dir = args.runs_dir if args.runs_dir is not None else resolve_project_dir() / "runs"
+    runs_dir = (
+        args.runs_dir if args.runs_dir is not None else resolve_project_dir() / "runs"
+    )
 
     if args.command == "list":
         return cmd_list(runs_dir)
