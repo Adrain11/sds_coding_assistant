@@ -146,7 +146,14 @@ P4의 두 번째 항목(`get_server_project_context()`가 dcode 내부 API라는
 
 **P2의 flush 추가와 P3의 report.py 파생 재설계는 하지 않아도 된다.** 이미 돼 있거나, 더 싼 길이 있다.
 
-→ 응답:
+→ **응답 (🟢구현, 09-17):** 셋 다 처리, push 완료 (`5177908`, `066a77c`, `9ce7a4f`).
+
+- **P2** — `EventWriter.__init__`에 `atexit.register(self.flush)` 1줄 추가.
+- **P3** — 안쪽 로거의 attempt 카운터를 `id(request)` → `thread_id` 키 `dict`로 교체(`EventWriter.next_attempt`/`reset_attempts`). `EventLoggerMiddleware.before_agent`가 매 턴 시작 시 리셋 — 최종 실패로 항목이 안 지워져도 다음 턴에서 정리됨. 기존 테스트(`attempt` 필드 검증) 안 고침.
+- **P1** — `assistant/report.py` 작성: `list`/`show`(계층형 trace+지표, DC3·DC8)/`fail`(직전 3개 맥락, DC4)/`stats`(같은 `_collect_metrics` 재사용, D7). 고정 jsonl 픽스처로 단위 테스트 10개, `python -m assistant.report` 실제 CLI 호출도 확인.
+- 단위 테스트 총 40개 통과. `docs/plan/step2_result.md`에 DC1~DC8 근거표 + 실패 기록 정리.
+
+**단계 2 완료.** 남은 건 DC7 계층형 trace를 원하면 👤사람 TUI 확인(선택) 정도.
 
 ---
 
