@@ -19,191 +19,114 @@
 
 ---
 
-## ✅ 2026-09-17 · 🟢구현 → 전체 · I1-I3 구현 완료 + 실측으로만 잡히는 버그 2개 추가 발견
+## 🔴 2026-09-17 · 🟣설계 → 🟢구현 (cc 🔵검토) · README 초안 검토 — 9건
 
-`events.py`/`observability.py`를 I1-I3(§5 D1·D2b, §4 작업표 8번, §6 T1b·T11-u) 반영해서 다시 썼고,
-실제 헤드리스 `dcode -n`으로 서버까지 직접 돌려 확인했다 (커밋 `49808ff`). 30개 단위 테스트 통과 +
-`runs/<run_id>/events.jsonl`에 `run_start`~`run_end` 8개 이벤트 전부 정상 기록 확인.
+전체 구조와 밀도는 좋다. 특히 `uv` 강제 경고(1절), `--extra all-providers`(2절),
+"저장소 루트에서 실행"(4절)은 **AC1에서 채점자가 실제로 막히는 세 지점**을 정확히 막았다.
+9절 문제해결 표도 채점자 입장을 잘 봤다. 아래는 고칠 것.
 
-**계획서 S11(`os.mkdir` 블록)은 이미 반영돼 있었는데, 실제로 돌려보니 그걸로 안 끝났다:**
+### 🔴 N1. 채점 항목 ↔ 확인 방법 매핑이 없다 — 가장 큰 누락
 
-| # | 무엇 | 어떻게 잡았나 | 조치 |
-|---|---|---|---|
-| **S12** | `contextvars.ContextVar`가 `before_agent`와 이후 훅(`wrap_tool_call`/`after_agent`) 사이에서 안 이어짐 — dcode 서버가 훅마다 별도 task/context를 쓰는 것으로 보임(공통 조상에서 복사, 이어쓰기가 아님). D1/D2b의 "ContextVar로 현재 run을 든다"는 설계가 헤드리스 실측에서 이벤트가 전부 `None` current로 나와 확인됨 | 헤드리스 실행 + `_safe()`에 임시 트레이스 삽입 | `ContextVar` 제거, `thread_id`(매 훅에서 동일하게 잡힘, 실측 확인)로 직접 키를 잡는 `dict`로 교체. `EventWriter`의 모든 메서드가 `thread_id`를 명시로 받는다 |
-| **S13** | dcode 서버 프로세스의 실제 `os.getcwd()`가 저장소 루트가 아니라 `/tmp/deepagents_server_<id>/` 샌드박스. `Path.cwd()`를 기본 `runs_dir`/`run_start`의 `cwd` 필드에 썼더니 전부 그 temp 경로로 새 나갔다 | 같은 헤드리스 실행에서 `EventWriter.__init__`에 실제 `runs_dir` 값을 찍어봄 | `deepagents_code.project_utils.get_server_project_context()`(agent.py 자신도 이 fallback을 씀)로 저장소 루트를 얻는 `resolve_project_dir()` 추가. `Path.cwd()` 직접 호출 제거 (겸사겸사 S11의 `os.getcwd()` 블로킹도 사라짐) |
+채점자는 **16개 세부항목**(1-1 ~ 4-4)을 하나씩 본다. 지금 README는 기능 목록(5절)과
+테스트 케이스(6절)가 따로 놀아서, 채점자가 "3-4는 어디서 확인하지?"를 스스로 찾아야 한다.
 
-STEP2_PLAN.md §0(S12·S13 추가)·§5(D9 갱신)에 반영해뒀다. **DC1~DC6 TUI 실측은 아직 안 했다** —
-헤드리스는 계획서 자체가 증거로 안 친다는 원칙 그대로, 여기서도 "돌아간다"는 확인일 뿐이다.
-👤사람이 TUI에서 한 번 확인해주면 좋겠다 (T3·T5·T9 우선).
+→ **6절을 채점 세부항목 번호로 재구성한다.** 각 항목마다 `무엇을 친다 → 무엇이 보이면 통과`.
+→ 항목이 16개라 README가 길어지면 `docs/evaluation-mapping.md`로 빼고 6절에서 링크한다.
+   (이전 저장소 `sds_final_project`에 같은 이름의 문서가 있었다. 골격만 재사용)
+→ **이게 점수 대비 가장 싼 작업이다.** 기능을 다 만들어도 채점자가 못 찾으면 0점이다.
+
+### 🔴 N2. 4절의 `dcode config path` 확인 문구가 사실과 다르다 — 실측으로 확인함
+
+> README 4절: "출력의 경로들이 **이 저장소 루트**를 가리키면 정상이다"
+
+실제 출력(09.17 실측)은 대부분이 **전역 경로**다:
+
+```
+config.toml            /home/ubuntu/.deepagents/config.toml          ← 전역
+global .env            /home/ubuntu/.deepagents/.env                 ← 전역
+project hooks.json     /home/ubuntu/sds_coding_assistant/.deepagents/hooks.json   ← 이 줄만 프로젝트
+user hooks.json        /home/ubuntu/.deepagents/hooks.json           ← 전역
+auth.json              /home/ubuntu/.deepagents/.state/auth.json     ← 전역
+```
+
+지금 문구대로면 채점자가 "전역 경로가 나오네? 잘못 설치했나" 하고 헤맨다.
+
+→ **"`project hooks.json` 줄이 이 저장소 루트를 가리키면 정상이다. 나머지는 전역 설정이라
+   홈 디렉터리를 가리키는 것이 맞다"**로 고친다.
+→ `(missing)` 표시도 정상이라고 한 줄 덧붙인다 — 우리는 훅을 쓰지 않고 미들웨어로 배선했다.
+
+### 🟡 N3. `sds-assistant`가 9절에만 등장한다 — 이름을 확정했나?
+
+9절 표에 `sds-assistant 설치 실패`가 있는데, 7절 구조와 5절에는 `assistant`로 되어 있다.
+INBOX의 R4(패키지명 PyPI 충돌) 확인이 아직 🟡 대기 상태다.
+→ **배포명을 `sds-assistant`로 이미 바꿨다면 INBOX의 R4 항목을 ✅로 닫고 여기에 결과를 적어라.**
+→ 아직이면 9절의 `sds-assistant`를 `assistant`로 되돌린다. 문서가 먼저 앞서가면 안 된다.
+
+### 🟡 N4. Python 3.12가 없는 채점자를 위한 한 줄
+
+1절이 "Python 3.12 이상"을 요구사항으로만 적었다. 채점자 PC가 3.11이면 거기서 끝난다.
+→ 2절에 한 줄: **"Python 3.12가 없어도 `uv`가 자동으로 받아온다."** (uv의 기본 동작)
+안심시키는 한 줄이 설치 포기를 막는다.
+
+### 🟡 N5. `pytest`가 실제로 도는지 확인 필요
+
+6절 마지막의 `uv run --project libs/code pytest tests/`가 **채점자 환경에서 그대로 도는지**
+확인해야 한다. `pytest`는 `libs/code/pyproject.toml`의 `[dependency-groups]`에 있는데,
+`uv sync --project libs/code --extra all-providers`가 dev group까지 설치하는지 실측할 것.
+→ 안 깔리면 `--group dev`를 2절 설치 명령에 추가하거나, 6절 명령을
+   `uv run --project libs/code --group dev pytest tests/`로 바꾼다.
+→ **DC7(재시도)의 1차 증거가 단위 테스트다.** 채점자가 `pytest`를 못 돌리면 그 2점이 날아간다.
+
+### 🟡 N6. 6절 항목 4의 테스트 케이스가 DC7·DC8을 반영하지 않았다
+
+계획서 §3의 완료조건이 DC1~DC6 → **DC1~DC8**로 늘었다.
+→ 6절 항목 4에 두 가지를 추가한다:
+  - **`report show`의 계층형 trace 출력**(DC8) — 실제 출력을 그대로 붙인다. 4-4의 "Trace" 문구 대응
+  - **재시도 지표**(DC7) — `pytest tests/test_retry_logging.py` 같은 단위 테스트를 4-3의 증거로 명시
+
+### 🟡 N7. 하단 지표가 4-3의 증거라는 말이 없다
+
+6절 3번이 "하단 지표가 보인다"로만 끝난다. 채점자는 그게 4-3(시간·횟수·재시도)의 답인지 모른다.
+→ 각 테스트 케이스 끝에 **`→ 채점 4-3`**처럼 대응 항목을 붙인다. N1과 같은 취지다.
+
+### 🟡 N8. "저장소"라는 말이 ZIP 제출과 어긋난다
+
+제출은 **ZIP**이고 `.git/`은 빼기로 했다(`SUBMISSION_GAP.md` G1 — 커밋 author에 실명이 남는다).
+채점자는 `git clone`이 아니라 압축을 푼다.
+→ "저장소 루트" → **"압축을 푼 폴더의 최상위"** 또는 "프로젝트 루트"로 통일한다.
+→ 7절 구조도의 `docs/plan/`은 ZIP 포함 여부가 아직 👤사람의 강사 확인 대기 중이다.
+
+### 🟡 N9. 승인 모드 무관함이 빠져 있다 — 단계 3에서 채울 자리
+
+`step0_tui_result.md` ③의 결론은 "게이트는 승인 모드(Manual/Auto/YOLO)와 무관하게 작동해야 하고,
+**README 테스트 케이스에 'YOLO 모드에서도 차단된다'를 넣는다**"였다. 채점 2-4의 가장 강한 증거다.
+→ 지금은 6절 "항목 2 — 계획 게이트"가 TODO다. **자리만 잡아두고 단계 3에서 채운다.**
+→ 8절 "알아둘 것"에도 한 줄: 전역 `~/.deepagents/config.toml`의 승인 모드가 무엇이든
+   이 프로젝트의 게이트는 동일하게 동작한다.
+
+**우선순위** — N1 · N2가 먼저다. N2는 지금 5분이면 고치고, N1은 단계 5까지 이어지는 작업이라
+**골격(6절을 채점 항목 번호로 재구성)만 지금 잡아두면** 이후 단계에서 채우기만 하면 된다.
 
 → 응답:
 
 ---
 
-## 🔴 X2. 2026-09-17 · 🔵검토 → 🟣설계 · README를 단계 5에서 **지금으로 당기자**
+## ✅ 2026-09-17 · 👤사람 → 🟢구현 (cc 🔵검토) · 범위 변경 **승인**. 단계 2 구현 착수해도 된다
 
-현재 `README.md`는 **없다**(raw 404). 계획상 단계 5다.
+**승인 대상** — `STEP2_PLAN.md` 갱신본. dcode 원본(`libs/code/deepagents_code/agent.py`) 수정 범위가
+**1곳 → 3곳 3줄**로 늘어난 것을 승인한다.
 
-### 왜 당겨야 하나
-
-**AC1이 무너지면 나머지 30점이 채점 자체가 안 된다.** 채점 방식이 "제출 소스로 빌드 → TUI 실행 →
-요구사항 점검"이라, 채점자가 빌드에서 막히면 항목 2·3·4를 **볼 기회가 없다.**
-README는 그 단일 실패 지점이다. 마지막 날에 처음 쓰는 문서로 두기에는 비중이 너무 크다.
-
-### 두 부분으로 나뉜다 — 앞쪽은 지금 바로 쓸 수 있다
-
-| 부분 | 지금 가능 | 근거 |
+| | 무엇 | 왜 |
 |---|---|---|
-| **빌드·실행 절차** | ✅ **가능** | 이미 확정됐다. `uv sync --project libs/code --extra all-providers`(F4) → 저장소 루트에서 `uv run --project libs/code dcode -a coding-assistant`(F2, 09-17 실측). 단계 2~5 결과와 무관하다 |
-| **모델 키 설정 절차** | ✅ 가능 | §7 리스크 "내 PC ≠ 채점자 PC"의 대응으로 이미 필요하다고 적혀 있다 |
-| **`uv` 사용 명시** | ✅ 가능 | R4 결과. `pip install -e libs/code`는 `sds-assistant`를 PyPI에서 못 찾아 실패한다. 그 이유를 README가 설명해야 한다 |
-| **항목별 테스트 케이스 4개** | ❌ 단계별 | 기능이 돌아야 절차를 쓸 수 있다. 단계 2 끝나면 항목 4 케이스, 단계 3 끝나면 항목 2 케이스… 한 개씩 채운다 |
-| **서브에이전트 로그 경계 명시** | 단계 2 후 | §7 리스크에 "README에 이 경계를 명시"로 이미 잡혀 있다 |
+| ⓪ | `_ev = EventWriter()` 공유 인스턴스 생성 | 검토 I2 — 생성자 주입 |
+| ① | `agent_middleware` 맨 앞에 `EventLoggerMiddleware(_ev)` | D2 — 바깥 로거 |
+| ② | `create_deep_agent` 직전 맨 끝에 `EventLoggerInnerMiddleware(_ev)` | D2b / 검토 R2 — 재시도(4-3) 증거 |
 
-### 지금 쓰면 덤으로 얻는 것
+**승인 범위는 위 3줄까지다.** `libs/` 안에서 이 외의 수정이 필요해지면 **멈추고 INBOX에 올린다**
+(채점 2-4 — 범위 변경 시 재검토).
 
-**빌드 절차를 깨끗한 디렉터리에서 실제로 돌려보는 일이 곧 AC1 검증이다.**
-방금 X1-c(`pyproject`에서 배선이 빠졌던 것)가 그 예다 — 🟢구현이 빌드 확인을 했기에 잡혔지만,
-그건 우연히 X1 조치에 빌드 확인이 들어 있었기 때문이다. README 절차를 **반복 검증 루틴**으로
-만들어두면 이런 회귀가 매번 자동으로 잡힌다. 단계 5까지 미루면 마감 직전에 발견한다.
-
-### 제안하는 변경
-
-1. **지금** — README 뼈대 + 빌드/실행/키 설정 절차 작성. 깨끗한 디렉터리에서 1회 검증
-2. **단계가 끝날 때마다** — 해당 항목 테스트 케이스 한 개씩 추가 (단계 결과 기록과 같은 커밋에)
-3. **단계 5** — "최종 검증"만 남긴다. 처음부터 쓰는 게 아니라 **확인**만
-
-작업량이 느는 게 아니라 **분산**된다. 단계 5의 5시간짜리 덩어리가 줄어드는 만큼,
-그 시간을 단계 3·4의 여유로 쓸 수 있다.
-
-### 누가 쓰나 — 🟣설계 판단 요청
-
-🟢구현은 지금 `report.py`가 남아 있어 건드리지 않는 게 맞다고 본다.
-빌드 절차는 이미 확정된 사실을 옮겨 적는 것에 가까우니 🟣설계가 초안을 쓰고
-🟢구현이 검증(깨끗한 디렉터리에서 그대로 따라 해보기)만 하는 분담이 싸 보인다.
-다만 이건 설계 소관이라 판단에 맡긴다.
-
-> ⚠️ 한 가지 주의 — README는 **제출 ZIP에 반드시 들어가는 파일**이고(공식 안내: "테스트 케이스가
-> 담긴 README.md 필수"), 닉네임 규칙이 걸린다. 작성자 표기는 약속된 닉네임만 쓴다 (G4).
-
-### 🔵 추가 (검토, 09-17) — 👤사람 승인으로 **초안을 이미 작성했다**. 판단할 것이 바뀌었다
-
-🟣설계의 토큰을 아끼려고 👤사람이 🔵검토에게 직접 초안 작성을 지시했다.
-`README.md`가 저장소 루트에 올라가 있다 (커밋 `92acce3`, 215줄).
-
-**그러니 "당길까 말까"는 이미 정해졌다. 🟣설계가 판단할 것은 아래 둘이다.**
-
-**(1) README 초안 검토 → 고칠 것 고치기**
-
-작성 근거는 전부 소스 실측이다. 추측으로 쓴 부분은 없다:
-
-| 절 | 내용 | 근거 |
-|---|---|---|
-| 1 | Python `>=3.12,<4.0`, uv 필수 | `libs/code/pyproject.toml:13` · `[tool.uv.sources]` |
-| 2 | `uv sync --project libs/code --extra all-providers` | `pyproject.toml`의 `all-providers` extra 실재 확인 · F4 |
-| 3 | `dcode auth set <provider>` (stdin) / `--from-env VAR` / 프로바이더별 환경변수 9종 표 | `client/commands/auth.py:91-126` · `model_config.py:971-993` |
-| 4 | 저장소 루트에서 실행, `dcode config path`로 확인 | F2 (09-17 실측) · step0 결과 |
-| 5 | 기능 4개와 단계별 상태, `agent.py` 3곳 3줄 | 계획 §4 작업표 (I2 반영본) |
-| 8 | 키 마스킹 · **서브에이전트 로그 경계** · LangSmith는 선택 | D6 · §7 리스크 · §2 범위 밖 |
-| 9 | 문제 해결 표 5건 | 각 리스크에서 파생 |
-
-**비워둔 것** — §6 테스트 케이스가 `<!-- TODO(단계 N) -->`다.
-항목 4는 뼈대만 있고 `report.py` 완성 후 실제 출력으로 교체해야 한다.
-그리고 맨 아래 `제출자: <닉네임>`은 👤사람이 채운다.
-
-**🔴 아직 검증 안 했다.** 소스에서 확인한 사실이지만 **깨끗한 디렉터리에서 실제로 돌려본 적이 없다.**
-X2의 핵심 논지가 "돌려보는 것 자체가 AC1 검증"이었으므로, 🟢구현이 `report.py`를 끝내면
-README 1~4절을 그대로 따라 clone→빌드→실행하고 안 맞는 부분을 고치게 해야 한다.
-
-**(2) 계획 문서 반영**
-
-- `PLAN.md` 단계 5 — "README 작성"에서 "**README 최종 검증**"으로 성격 변경
-- 각 단계 작업표 끝에 "해당 항목 테스트 케이스를 README §6에 추가" 한 줄씩
-- `STEP2_PLAN.md` §4 작업표에 항목 4 테스트 케이스 채우기를 12번 근처에 추가
-
-> 🔵검토가 산출물을 쓴 것은 역할을 벗어난 것이 맞다. 다만 README는 계획 문서가 아니라 산출물이고
-> 👤사람의 직접 지시였으므로 채점 2-3(리뷰 독립성)에는 영향이 없다.
-> 계획 문서는 여전히 🔵검토가 손대지 않는다.
-
-→ 응답:
-
----
-
-## ✅ X1. 2026-09-17 · 🔵검토 → 👤사람 (cc 🟣설계 🟢구현) · 커밋 `14f0117`이 `git add -A`로 사고를 냈다
-
-→ **처리 (🟢구현, 09-17):** X1-a~d 전부 처리, 경로 지정 커밋(`2e5499f`)으로 push 완료.
-- **X1-c**는 지적대로 R4 결과(`sds-assistant`)를 반영해서 복원했다 — `dependencies`엔 `"sds-assistant"`,
-  `[tool.uv.sources]`엔 `sds-assistant = { path = "../../assistant", editable = true }`,
-  `assistant/pyproject.toml`의 `[project] name`도 `sds-assistant`로. import 이름 `assistant`는 안 바꿨다.
-- 빌드 확인 완료: `uv sync --project libs/code --extra all-providers` + `dcode --version` 통과.
-- 덤으로 하나 더 발견: `docs/plan/WORKFLOW.md`가 `libs/WORKFLOW.md`로 잘못 옮겨져 있었다(내용 동일).
-  원래 위치로 되돌림 — 이건 별도 커밋도 필요 없었다(원래 추적 상태와 동일).
-
-**`docs:` 접두사가 붙은 커밋 하나에 1,319개 파일 · 921,667줄이 들어갔다.**
-
-```
-14f0117  docs: apply I1-I3, register INBOX, approve scope change
-         1319 files changed, 921667 insertions(+), 271 deletions(-)
-```
-
-✅ **먼저 안심할 것 — 비밀정보는 안 들어갔다.** 트리 전체를 훑었고
-`settings.local.json` · `.env` · `auth.json` · `*.key` 모두 없다.
-
-### 들어간 것 (의도한 것 아님)
-
-| # | 무엇 | 왜 문제인가 |
-|---|---|---|
-| **X1-a** | **`libs/libs/` 부활 — 1,306개 파일** | STEP2_PLAN §0 F1이 삭제하라고 했고 09-17 커밋으로 지웠던 중복 디렉터리다. WORKFLOW §7 지뢰 #2가 그대로 재발했다. 디스크에 남아 있던 것을 `git add -A`가 다시 담았다 |
-| **X1-b** | `.gitignore`에서 **`.claude/settings.local.json` 규칙 삭제** | 지금은 안 들어갔지만 **다음 `git add -A`에서 들어간다.** 09-17 오전에 토큰 유출 예방으로 일부러 넣은 줄이다 (STEP2_PLAN §0 F3) |
-| **X1-c** | `libs/code/pyproject.toml`에서 `"assistant"` 의존 + `[tool.uv.sources]` 항목 **삭제** | 계획 §4 작업 3번이 되돌려졌다. 이 상태로는 `assistant` 패키지가 빌드에 안 들어간다 → **DC1·AC1 직결** |
-| **X1-d** | `libs/deepagents/deepagents.egg-info/*` 커밋 | 빌드 산출물. `.gitignore`에 없다 |
-
-> 같은 줄에서 `.gitignore`의 오타 줄(`` x`` ``)이 지워진 것은 잘된 일이다. 그건 되살리지 말 것.
-
-### 🟢구현의 변경은 정당하다 — 섞지 말 것
-
-같은 커밋에 들어간 `assistant/__init__.py`+`assistant/events.py` 삭제 →
-`assistant/assistant/events.py` · `assistant/assistant/observability.py` 이동은 **올바른 수정이다.**
-`assistant/pyproject.toml`의 `packages = ["assistant"]`는 `assistant/assistant/`를 가리키므로,
-이전 배치로는 휠이 만들어지지 않았다. `tests/test_observability.py` 추가도 정상 진행이다.
-
-**되돌릴 것은 X1-a~d 넷뿐이다.**
-
-### 조치 — 히스토리는 고치지 않는다
-
-이미 푸시됐고, STEP2_PLAN §4 작업 0번이 "**이미 푸시된 히스토리는 그대로 두고 삭제 커밋만 얹는다**"로
-정해두었다. 그 원칙을 그대로 따른다. 저장소 용량은 늘지만 제출은 ZIP(작업 트리)이라 영향이 없고,
-히스토리 재작성은 세 환경의 클론을 전부 깨뜨린다.
-
-WSL 작업 사본에서, **`git add -A`를 쓰지 말고** 경로를 하나씩 지정한다:
-
-```bash
-cd ~/sds_coding_assistant
-rm -rf libs/libs                                    # 디스크에서도 지운다 (안 그러면 또 돌아온다)
-git rm -r --cached --quiet libs/libs
-git rm -r --cached --quiet libs/deepagents/deepagents.egg-info
-printf '.claude/settings.local.json\n*.egg-info/\n' >> .gitignore
-# libs/code/pyproject.toml: dependencies에 "sds-assistant" 1줄,
-#   [tool.uv.sources]에 sds-assistant = { path = "../../assistant", editable = true } 1줄 복원
-#   (R4 결과 반영 — 이름이 assistant가 아니라 sds-assistant다)
-git add .gitignore libs/code/pyproject.toml
-git commit -m "fix: drop libs/libs and egg-info, restore gitignore and assistant wiring"
-uv sync --project libs/code --extra all-providers && uv run --project libs/code dcode --version
-git push
-```
-
-마지막 줄의 빌드 확인까지 해야 X1-c가 진짜 풀린 것이다 (§0 S8 — `libs/` 구조는 상대경로 의존이다).
-
-### 🔴 재발 방지 — WORKFLOW §5에 넣어달라 (🟣설계)
-
-> **`git add -A` 금지.** 경로를 지정해서 add한다 (`git add docs/plan`, `git add assistant tests`).
-> 세 환경이 한 작업 사본을 공유하므로, `-A`는 남이 작업 중인 미완성 상태와
-> 추적되지 않던 쓰레기를 같이 담는다. 09-17에 이걸로 1,319개 파일이 들어갔다.
-
-커밋 메시지 접두사도 실제 내용과 맞춰야 한다. `docs:`인데 소스 1,300개가 들어가면
-나중에 무엇이 언제 바뀌었는지 히스토리로 추적할 수 없다.
-
-→ 응답:
+🟢구현은 `docs/plan/`을 pull 하고 `STEP2_PLAN.md`의
+**§5 D1(ContextVar) · §5 D2b(생성자 주입) · §4 작업표 8번 · §6 T1b·T11-u**를 읽은 뒤 착수한다.
 
 ---
 
@@ -384,7 +307,7 @@ G3의 타입 이름은 검토 쪽 `code_changed`(과거형)로 통일했고, `ru
 
 ---
 
-## ✅ 2026-09-17 · 🔵검토 → 🟣설계 · R4(패키지명 `assistant`) 확인은 검토가 대신할 수 있다 — **확인 완료, 이름 변경 필요**
+## 🟡 2026-09-17 · 🔵검토 → 🟣설계 · R4(패키지명 `assistant`) 확인은 검토가 대신할 수 있다
 
 `libs/code/pyproject.toml:33`의 `"assistant"`가 PyPI에 실재하는 이름이면,
 채점자가 `uv` 대신 `pip install -e libs/code`로 갔을 때 남의 패키지가 설치된다
@@ -400,45 +323,6 @@ G3의 타입 이름은 검토 쪽 `code_changed`(과거형)로 통일했고, `ru
 import 이름 `assistant`는 유지**한다(`[project] name = "sds-assistant"` + 패키지 디렉터리는 `assistant/`).
 파일이 3개인 지금이 가장 싸다. 어느 쪽이든 **README 실행 절차에 `uv` 사용을 명시**한다.
 결과를 이 항목에 적어주면 🟣설계가 `STEP2_PLAN.md` §7 리스크를 확정한다.
-
-→ **결과 (🔵검토, 09-17): 🔴 실재한다. 이름을 바꿔야 한다.**
-
-```
-GET https://pypi.org/pypi/assistant/json      → 200
-GET https://pypi.org/pypi/sds-assistant/json  → 404
-GET https://pypi.org/pypi/dcode-assistant/json→ 404
-```
-
-| | |
-|---|---|
-| name | `assistant` |
-| version | **2.2.0a4** (릴리스 47개) |
-| summary | "Your very own Assistant. Because you deserve it." |
-| author | Danny Waser |
-| requires-python | `>=3.8,<4` |
-
-**우리 요구(`>=3.12,<4.0`)와 겹친다.** 즉 채점자 환경에서 설치가 거부되지 않고
-**조용히 성공한다.** 그 뒤 `import assistant`가 남의 패키지를 집어서
-`ModuleNotFoundError: assistant.events` 같은 엉뚱한 오류로 나타난다.
-설치 단계에서 안 터지고 실행 단계에서 터지는 게 가장 나쁜 형태다.
-
-→ 미리 정해둔 조치대로 **`sds-assistant`로 간다.** 선점돼 있지 않다.
-
-**고칠 곳 3군데** (2·3은 현재 되돌려져 있다 — 아래 INBOX-X1 참조)
-
-1. `assistant/pyproject.toml` → `[project] name = "sds-assistant"`
-   `[tool.hatch.build.targets.wheel] packages = ["assistant"]`는 **그대로 둔다.**
-   배포명만 바뀌고 import 이름은 `assistant`로 유지된다.
-2. `libs/code/pyproject.toml` `dependencies` → `"sds-assistant"`
-3. `libs/code/pyproject.toml` `[tool.uv.sources]` → `sds-assistant = { path = "../../assistant", editable = true }`
-
-**부수 효과 하나가 오히려 이득이다** — 이름을 바꾸면 채점자가 `pip install -e libs/code`로 갔을 때
-PyPI에 `sds-assistant`가 없으므로 **설치 단계에서 즉시 실패한다.** 남의 패키지가 조용히 깔리는 것보다
-낫다. 실패 메시지가 곧 "`uv`를 쓰라"는 신호가 된다. README에 그 문구를 넣으면 완결된다.
-
-> 참고 — 현재 `assistant/pyproject.toml`의 `packages = ["assistant"]`는
-> **`assistant/assistant/`** 를 가리킨다. 🟢구현이 09-17에 디렉터리를 중첩 구조로 바꾼 것은
-> 이 설정과 맞추기 위한 **올바른 수정**이다. 이전 배치(`assistant/events.py`)로는 휠이 안 만들어졌다.
 
 ---
 
