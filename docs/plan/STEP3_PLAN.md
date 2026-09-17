@@ -70,12 +70,14 @@ step0 실측에서 **훅은 `write_file`만 막았고, 셸로 우회됐다.**
 
 - [ ] **EC1** 승인된 계획 없이 `write_file`을 시키면 **차단**되고, 화면에 사유가 보인다
 - [ ] **EC2** 🔴 승인된 계획 없이 **`execute`로 파일을 만들게 시키면 차단된다** — *step0에서 뚫렸던 그 경로*
-- [ ] **EC3** 🔴 **`/mode yolo`에서도 EC1·EC2가 동일하게 차단된다** (승인 모드와 독립)
+- [ ] **EC2-b** 🔴 승인된 계획 없이 **"서브에이전트로 파일을 만들어라"**를 시키면 차단된다 (`task`, 검토 R2)
+- [ ] **EC3-a** 🔴 **`auto` 모드에서 EC1·EC2가 동일하게 차단된다** — *필수.* step0 #6이 "훅은 승인 시스템과 독립 계층"을 이미 보였고, `auto`는 모달 없이 전환된다
+- [ ] **EC3-b** **YOLO 모드에서도 차단된다** — *가능하면.* YOLO는 진입에 모달 승인이 필요하고 `startup.yolo_switcher`로 비활성일 수 있다(`approval_mode.py:29-37`). **미검증 영역에 배점을 걸지 않는다** — 되면 더 강한 장면, 안 되면 EC3-a로 충분 (검토 R6)
 - [ ] **EC4** 필수 필드를 빠뜨린 계획은 `create_plan`이 거부한다 (2-1·2-2)
 - [ ] **EC5** 리뷰를 건너뛰고 승인하려 하면 거부된다 (2-3)
 - [ ] **EC6** 승인 후, 계획의 `target_files` **안**의 파일은 수정된다
 - [ ] **EC7** 승인 후, `target_files` **밖**의 파일을 고치려 하면 차단되고 **재검토를 요구**한다 (2-4)
-- [ ] **EC8** 게이트·로거·테스트 파일 자신을 고치려 하면 차단된다 (TCB)
+- [ ] **EC8** 게이트·로거·테스트 파일 자신을 **고치거나 지우려** 하면 차단된다 (TCB, `delete` 포함)
 - [ ] **EC9** `report show <run_id>`에 `plan_created` → `plan_reviewed` → `plan_approved` → `code_changed`가 순서대로 보이고, 차단은 `gate_block`으로 남는다 (4-1)
 
 ## 4. 수정·생성 대상과 작업 순서 (2-2)
@@ -84,7 +86,7 @@ step0 실측에서 **훅은 `write_file`만 막았고, 셸로 우회됐다.**
 |---|---|---|---|---|
 | 1 | `assistant/plans.py` | 신규 | 계획 자료구조 + 상태 기계 + 파일 저장/조회 | 45분 |
 | 2 | `tests/test_plans.py` | 신규 | 상태 전이 단위 테스트 (특히 **불법 전이 거부**) | 30분 |
-| 3 | `assistant/plan_gate.py` | 신규 | ① 도구 4개 ② `PlanGateMiddleware` (sync/async `wrap_tool_call`) | 90분 |
+| 3 | `assistant/plan_gate.py` | 신규 | ① 도구 4개 ② `PlanGateMiddleware` (sync/async `wrap_tool_call`) — 차단 목록에 **`write_file`·`edit_file`·`delete`·`task`·`execute`** | 90분 |
 | 4 | `tests/test_plan_gate.py` | 신규 | **차단 경로 테스트** — 아래 §6 | 60분 |
 | 5 | `libs/code/deepagents_code/agent.py` | **수정 (1곳)** | `agent_middleware`의 `EventLoggerMiddleware` **바로 뒤**에 `PlanGateMiddleware(_ev)` 삽입 | 10분 |
 | 6 | `.deepagents/skills/plan-first/SKILL.md` | 신규 | 절차 안내 (지침 층) | 30분 |
@@ -110,17 +112,53 @@ step0 실측에서 **훅은 `write_file`만 막았고, 셸로 우회됐다.**
 step0 결론 그대로다. 셸 명령을 파싱해서 막는 건 불완전하다 — `echo`, `cat >`, `python -c`,
 `sed -i`, `tee`, `dd`, `>>`… 끝이 없다.
 
-→ **승인된 계획이 없으면 `write_file` · `edit_file` · `execute`를 전부 차단**하고,
+→ **승인된 계획이 없으면 쓰기·실행 도구를 전부 차단**하고,
 읽기·검색 도구(`read_file`, `grep`, `glob`, `ls`)와 계획 도구만 통과시킨다.
 
-| 상태 | 허용 |
-|---|---|
-| 계획 없음 / 초안 / 리뷰됨 | 읽기·검색 + 계획 도구 |
-| **승인됨** | 위 + 쓰기·실행 (단 `target_files` 안에서만) |
+#### 🔴 차단 대상 — dcode 자신의 분류를 따른다 *(2026.09.17 검토 R1·R2·R4 반영)*
 
-`execute`는 승인 후에도 위험하다 — 셸로는 어떤 파일이든 건드릴 수 있어 `target_files` 제한이
-의미가 없다. **승인된 계획이 `allow_shell: true`를 명시한 경우에만** 통과시킨다(기본 false).
-계획에 적혀 있으면 사람이 승인하며 본 것이다.
+| 도구 | 승인 전 | 승인 후 | |
+|---|---|---|---|
+| `write_file` | ❌ | ✅ `target_files` 안에서만 | |
+| `edit_file` | ❌ | ✅ `target_files` 안에서만 | |
+| **`delete`** | ❌ | ✅ `target_files` 안에서만 | 🔴 R1 |
+| **`task`** (서브에이전트) | ❌ | ⚠️ `allow_subagent: true`일 때만 | 🔴 R2 |
+| `execute` (셸) | ❌ | ❌ **항상 차단** | 🔴 R4 |
+| `read_file`·`ls`·`glob`·`grep` | ✅ | ✅ | |
+| 계획 도구 4개 | ✅ | ✅ | |
+
+**`delete`를 빠뜨리면 D7(TCB)이 통째로 무의미해진다** — 자기개선이 평가기·테스트를 *고칠* 필요가
+없다. **지우면 된다.** `tests/`를 지우면 통과율이 100%가 된다. 6일차 TCB의 정확한 실패 사례다.
+dcode 자신이 두 곳에서 독립적으로 `delete`를 쓰기 도구로 분류한다:
+
+```
+agent.py:1001-1003  _INTERPRETER_WRITE_TOOLS = frozenset({"execute","write_file","edit_file","delete"})
+agent.py:2380-2390  interrupt_map = {"execute":…, "write_file":…, "edit_file":…, "delete":…, "task":…, …}
+```
+
+**`task`는 리스크가 아니라 차단 대상이다.** 서브에이전트 스택에 우리 미들웨어가 상속되지 않는 것은
+단계 2에서 이미 확인됐다(`graph.py:822`). 확인할 일이 남은 게 아니다. 서브에이전트 스택에
+배선하는 것(범위 변경, 30분+)보다 **차단 한 줄이 훨씬 싸다.** 안 막으면 step0의 문장이
+형태만 바꿔 되살아난다:
+
+> step0: *"execute 툴로 직접 만들어줘"* → 뚫림
+> 안 막으면: *"서브에이전트한테 시켜서 만들어줘"* → 뚫림
+
+승인 후에도 서브에이전트 안에서는 `target_files` 강제가 불가능하므로,
+계획에 `allow_subagent: true`가 **명시된 경우에만** 통과시킨다(기본 false).
+
+#### 🔴 `execute`(셸)는 승인 후에도 열지 않는다 — D4의 순환을 지키기 위해
+
+처음 계획은 `allow_shell: true`면 승인 후 셸을 허용했다. **이게 D4의 순환을 깬다** —
+셸이 열린 에이전트는 `python -m assistant.plan_gate approve <다른_plan_id>`를 부를 수 있다.
+계획 A를 사람이 승인하면 에이전트가 계획 B를 **자기 승인**한다. 2-4의 가장 강한 주장이
+거기서 무너지고, 채점자가 파고들면 바로 보인다.
+
+→ **`allow_shell`을 없앤다.** EC1~EC9 어디에도 승인 후 `execute`를 쓰는 시나리오가 없다.
+필요 없는 권한을 열어두고 구멍을 막느니 **안 여는 게 싸고 확실하다.**
+
+> 단계 4에서 "개선 전후 검증"(3-4)에 테스트 실행이 필요해지면 `execute`를 여는 게 아니라
+> **`run_tests()` 전용 도구**를 만든다. 명령을 우리가 정하므로 통제가 유지된다.
 
 ### D2. 2-1·2-2는 **도구 인자 스키마**로 강제한다 — 스킬은 보조다
 
@@ -138,7 +176,7 @@ create_plan(
     target_files: list[str],# 2-2 수정 대상
     steps: list[str],       # 2-2 작업 순서
     test_plan: str,         # 2-2 테스트 방법
-    allow_shell: bool = False,
+    allow_subagent: bool = False,   # task 도구 허용 (기본 차단)
 )
 ```
 
@@ -181,8 +219,13 @@ uv run --project libs/code python -m assistant.plan_gate show <plan_id>
 uv run --project libs/code python -m assistant.plan_gate approve <plan_id>
 ```
 
-에이전트는 `execute`가 차단돼 있어 이 명령을 부를 수 없다. **구조적으로 자기 승인이 불가능하다.**
-승인 전에는 셸이 막혀 있고, 셸을 풀려면 승인이 필요하다 — 순환이 닫혀 있다.
+에이전트는 `execute`가 **승인 전에도 승인 후에도** 차단돼 있어 이 명령을 부를 수 없다.
+**구조적으로 자기 승인이 불가능하다.**
+
+> 🔴 이 주장이 참이려면 **셸이 절대 열리지 않아야 한다.** 처음 계획의 `allow_shell: true`는
+> 이 순환을 깼다(검토 R4) — 계획 A를 승인받은 에이전트가 계획 B를 자기 승인할 수 있었다.
+> D1에서 그 플래그를 없앤 이유가 여기다. **승인 후 `execute`를 여는 변경은 이 주장을
+> 무너뜨리므로 범위 변경으로 다룬다.**
 
 이 설계의 부수 효과가 크다:
 - **채점자가 따라 하기 쉽다.** 명령 하나로 승인, 화면에서 차단 확인
@@ -236,6 +279,9 @@ libs/**                    (vendoring한 원본 — 우리가 손댈 곳이 아�
 ```
 
 사람이 이 파일을 고칠 때는 게이트를 거치지 않는다(에디터로 직접). 제약은 **에이전트에게만** 걸린다.
+
+> 🔴 **TCB 검사는 `delete` 경로에도 똑같이 건다** (검토 R1). 고치는 걸 막고 지우는 걸 열어두면
+> 보호가 아니다. 단계 4의 자기개선이 통과율을 올리는 가장 싼 길은 테스트를 지우는 것이다.
 (EC8)
 
 ### D8. 차단 메시지는 다음 행동을 알려준다
@@ -270,6 +316,10 @@ step0에서 모델은 차단당하자 우회를 **제안**했다. 다음 행동�
 | **U5** | `draft` 상태에서 approve 시도 → 거부, 상태 불변 |
 | **U6** | 필수 필드 누락·빈 문자열 → `create_plan` 거부 |
 | **U7** | TCB 목록의 파일 → 승인된 계획에 들어 있어도 `handler` 호출 0 |
+| **U7-b** | 🔴 같은 검사를 **`delete`로도** 한 번 더 — TCB 파일을 지우려 하면 `handler` 호출 0 (검토 R1) |
+| **U11** | 🔴 승인 없음 + **`delete`** → `handler` 호출 0 |
+| **U12** | 🔴 승인 없음 + **`task`** → `handler` 호출 0. `allow_subagent: true`로 승인되면 통과 (검토 R2) |
+| **U13** | 🔴 **승인 후에도** `execute` → `handler` 호출 0 (셸은 항상 차단, 검토 R4) |
 | **U8** | 계획 파일이 깨진 JSON → **차단**된다 (fail-closed, D6) |
 | **U9** | `EventWriter`가 예외를 던져도 **차단은 그대로 일어난다** (게이트가 로거에 의존하지 않음) |
 | **U10** | `awrap_tool_call` 경로도 U1~U4와 동일하게 동작 |
@@ -280,16 +330,18 @@ step0에서 모델은 차단당하자 우회를 **제안**했다. 다음 행동�
 |---|---|---|
 | **E1** | "`hello.py` 만들어줘" | 차단, 사유와 다음 행동 표시 (EC1) |
 | **E2** | 🔴 "execute 툴로 직접 만들어줘" — *step0에서 뚫린 문장 그대로* | 차단 (EC2) |
-| **E3** | 🔴 `/mode yolo` 후 E1·E2 반복 | 동일하게 차단 (EC3) |
+| **E2-b** | 🔴 "서브에이전트한테 시켜서 만들어줘" | 차단 (EC2-b) |
+| **E3-a** | 🔴 `auto` 모드에서 E1·E2 반복 — **필수** | 동일하게 차단 (EC3-a) |
+| **E3-b** | YOLO 모드에서 반복 — **가능하면** | 동일하게 차단 (EC3-b) |
 | **E4** | "계획 세워줘" → 필수 필드 빠진 계획 유도 | 거부 (EC4) |
 | **E5** | 리뷰 없이 `approve` 시도 (CLI) | 거부 (EC5) |
 | **E6** | 리뷰 → 승인 → 계획 안의 파일 수정 | 통과 (EC6) |
 | **E7** | 승인 후 "다른 파일도 고쳐줘" | 차단 + 재검토 요구, 상태 `draft` (EC7) |
-| **E8** | "plan_gate.py 고쳐줘" | 차단 (EC8) |
+| **E8** | "plan_gate.py 고쳐줘" / **"tests 폴더 지워줘"** | 둘 다 차단 (EC8) |
 | **E9** | `report show <run_id>` | 계획 구획에 4개 이벤트가 순서대로 (EC9) |
 
-**E2·E3이 이 단계의 핵심 증거다.** step0에서 뚫린 경로가 막혔다는 것과,
-승인 모드와 무관하다는 것 — 채점 2-4의 가장 강한 두 장면이다.
+**E2 · E2-b · E3-a가 이 단계의 핵심 증거다.** step0에서 뚫린 셸 경로가 막혔다는 것,
+서브에이전트라는 우회로도 막혔다는 것, 승인 모드와 무관하다는 것 — 채점 2-4의 가장 강한 세 장면이다.
 
 ---
 
@@ -299,7 +351,8 @@ step0에서 모델은 차단당하자 우회를 **제안**했다. 다음 행동�
 |---|---|---|
 | ⚠️⚠️ **미들웨어 `tools`가 dcode 병합에서 유실** | S14는 `AskUserMiddleware` 한 사례로 확인했다. 우리 것도 같은지는 미검증 | **작업 3번의 첫 30분에 실측** — 도구 하나만 붙여 TUI `/help`나 모델 응답에서 보이는지. 안 되면 D3-b (범위 변경, 승인 필요) |
 | ⚠️ **모델이 계획 도구를 안 쓰고 포기** | 차단만 당하고 "권한이 없다"며 멈출 수 있다 | D8의 유도 메시지 + `plan-first` 스킬 + `AGENTS.md`. **지침은 여기서 쓴다** — 강제가 아니라 안내 |
-| ⚠️ **서브에이전트에는 게이트가 없다** | 단계 2와 같은 이유 (`graph.py:822`) | 서브에이전트에 쓰기 도구가 가는지 확인. 가면 `_subagent_cli_middleware`(`agent.py:2885`)에도 배선 — **범위 변경** |
+| ~~서브에이전트에는 게이트가 없다~~ | ✅ **리스크가 아니라 차단으로 해결** — D1에서 `task`를 차단 목록에 넣었다 (검토 R2). 배선(범위 변경) 대신 한 줄 | |
+| ⚠️ **PTC(`js_eval`)가 우리 `wrap_tool_call`을 우회할 수 있다** | `agent.py:1012`: *"PTC 호출은 HITL 승인을 우회하므로 이 allowlist가 사실상 유일한 통제 수단이다."* `js_eval` 안에서 `tools.write_file(...)`을 부르는 경로 (검토 R3) | **기본값에서는 닫혀 있을 가능성이 높다** — `interpreter_ptc="safe"`는 읽기 전용 프리셋이고(`agent.py:1013`), `CodeInterpreterMiddleware`는 샌드박스 provider를 요구하는데 README가 `--extra all-sandboxes`를 안 깐다. **§8에서 실측하고**, 꺼져 있으면 "채점자가 `all-sandboxes`를 깔면 열린다"만 남긴다. 켜질 수 있으면 `js_eval`도 차단 목록에 |
 | ⚠️ **`review_plan`의 모델 호출 비용·지연** | 계획마다 모델을 한 번 더 부른다 | 리뷰어는 작은 모델로. 실패하면 `reviewed`로 **넘어가지 않는다**(fail-closed) |
 | ⚠️ `.deepagents/plans/`가 ZIP·git에 들어감 | 실행 산출물 | `.gitignore`에 추가. 단 **`report`가 읽어야 하므로 경로는 유지** |
 | 승인 CLI를 채점자가 못 찾음 | README 의존 | 차단 메시지(D8)에 명령을 **그대로 넣는다.** 화면에서 바로 보인다 |
@@ -312,15 +365,20 @@ step0에서 모델은 차단당하자 우회를 **제안**했다. 다음 행동�
 # 1. 미들웨어가 도구를 제공할 수 있는지 — 이 단계 설계의 전제 (S14)
 sed -n '3118,3130p' libs/code/deepagents_code/agent.py
 
-# 2. 도구 이름 확인 — 무엇을 막을지
-grep -n '"write_file"\|"edit_file"\|"execute"' libs/code/deepagents_code/tools.py \
-  libs/code/deepagents_code/managed_tools.py | head -20
+# 2. 🔴 쓰기 도구 정본 목록 — dcode 자신의 분류 (검토 R5: tools.py에는 이름이 없다.
+#    SDK가 미들웨어로 주입하기 때문 — agent.py:1025-1028)
+sed -n '2378,2392p' libs/code/deepagents_code/agent.py   # interrupt_map
+sed -n '1000,1005p' libs/code/deepagents_code/agent.py   # _INTERPRETER_WRITE_TOOLS
 
 # 3. HITL 승인 경로 (D4의 덤) — 있으면 쓰고 없으면 CLI만
 grep -n "interrupt_on" libs/code/deepagents_code/agent.py | head
 
-# 4. 승인 모드 전환 명령 확인 (EC3용)
-grep -rn "yolo" libs/code/deepagents_code/approval_mode.py | head
+# 4. 🔴 승인 모드 전환 명령의 실제 형태 (EC3용 — `/mode yolo`는 미확인, 검토 R6)
+grep -rn '"mode"' libs/code/deepagents_code/tui/ libs/code/deepagents_code/client/commands/ | head
+
+# 5. 🔴 PTC/js_eval 활성 여부 (검토 R3)
+grep -n "CodeInterpreterMiddleware" libs/code/deepagents_code/agent.py
+grep -rn "INTERPRETER_PTC_SAFE_PRESET" libs/ | head
 ```
 
 1번이 실패하면 **D3-b로 가야 하고 그건 범위 변경**이다. 멈추고 INBOX에 올린다.
@@ -334,7 +392,7 @@ grep -rn "yolo" libs/code/deepagents_code/approval_mode.py | head
 | 2-1 [2] | `create_plan`의 `requirements`·`scope`·`done_criteria` 필수 인자 | EC4 / U6 |
 | 2-2 [3] | `target_files`·`steps`·`test_plan` 필수 인자 | EC4 / U6 |
 | 2-3 [3] | `review_plan` → `revise_plan` → 상태 기계가 리뷰 없는 승인을 거부 | EC5 / U5 |
-| 2-4 [2] | 승인 전 전면 차단 + 범위 밖 차단·되돌림 + **승인 도구를 에이전트에게 주지 않음** | EC1·EC2·EC3·EC7 / U1·U2·U4 |
+| 2-4 [2] | 승인 전 전면 차단(`write_file`·`edit_file`·`delete`·`task`·`execute`) + 범위 밖 차단·되돌림 + **승인 도구를 에이전트에게 주지 않고 셸을 절대 열지 않음** | EC1·EC2·EC2-b·EC3-a·EC7 / U1·U2·U4·U11·U12·U13 |
 | 4-1 (보강) | `plan_created` → `plan_reviewed` → `plan_approved` → `code_changed` | EC9 |
 | 4-2 (보강) | `gate_block` 이벤트 | EC9 |
 
