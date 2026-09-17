@@ -135,8 +135,6 @@ dcode 원본 수정은 `libs/code/deepagents_code/agent.py` **3곳 3줄**이 전
 
 ### 항목 4 — 모니터링
 
-<!-- TODO(단계 2): report.py 완성 후 실제 출력으로 교체 -->
-
 1. TUI를 띄우고 아무 작업이나 시킨다 (예: "README.md 읽어줘")
 2. 종료 후 조회:
    ```bash
@@ -148,6 +146,38 @@ dcode 원본 수정은 `libs/code/deepagents_code/agent.py` **3곳 3줄**이 전
    ```bash
    uv run --project libs/code python -m assistant.report fail <run_id>
    ```
+
+**실제 출력 (2026.09.17, 이 저장소의 `runs/`에서 그대로 뽑음 — 손으로 만든 예시가 아니다):**
+
+```
+$ uv run --project libs/code python -m assistant.report list
+20260917-163808-01a0ae4d  미종료                -  실패 1
+20260917-161247-01a0ae34  ok              9.5s  실패 1
+20260917-161203-01a0ae34  ok             18.0s  실패 0
+```
+
+```
+$ uv run --project libs/code python -m assistant.report show 20260917-161203-01a0ae34
+run 20260917-161203-01a0ae34   (18.0s, 실패 0)
+├─ model_call #1             10.7s   in=17175 out=82
+├─ tool  read_file            0.0s   ok
+└─ model_call #2              6.5s   in=19473 out=462
+
+지표  모델 2회(시도) · 도구 1회 · 재시도 0회 · 총 18.0s · 토큰 in 36648 / out 544
+```
+
+```
+$ uv run --project libs/code python -m assistant.report fail 20260917-163808-01a0ae4d
+--- seq=3 model_error (deepseek/deepseek-v4.1-flash) ---
+   seq=1    run_start    -               status=-
+   seq=2    model_start  deepseek/deepseek-v4.1-flash status=-
+>> seq=3    model_error  deepseek/deepseek-v4.1-flash status=error
+    error: ForbiddenResponseError: Key limit exceeded (total limit). Manage it using https://openrouter.ai/... (계정별 URL은 여기서 생략)
+```
+
+세 번째 예시는 `list`에도 나오듯 실제로 있었던 실패다 — 이 프로젝트를 진행하며 모델 프로바이더
+키가 한도를 넘겨서 난 실패를 그대로 잡은 것이다(원인이 `>>` 표시 줄과 `error:` 줄에 그대로 나온다).
+`미종료`로 표시된 것은 `run_end`가 안 남았기 때문 — 모델 호출 자체가 실패해 턴이 안 끝났다.
 
 ### 항목 2 — 계획 게이트
 
