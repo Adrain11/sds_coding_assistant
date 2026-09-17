@@ -1,9 +1,23 @@
 """Event-logging middleware wired into dcode's agent (Step 2).
 
-`EventLoggerMiddleware` is the only piece of `assistant/` that dcode's own
-graph calls directly. It implements all 6 hooks required by D3
-(`docs/plan/STEP2_PLAN.md` §5): `before_agent`, `wrap_model_call` +
-`awrap_model_call`, `wrap_tool_call` + `awrap_tool_call`, and `after_agent`.
+Two middleware classes share one `EventWriter` (constructor injection — D2b,
+검토 I2):
+
+- `EventLoggerMiddleware` — outer (`agent_middleware` front, D2). Owns the
+  run boundary (`before_agent`/`after_agent`) and tool calls. Being outer
+  means it also sees tool calls an inner middleware (e.g. Step 3's plan
+  gate) blocks.
+- `EventLoggerInnerMiddleware` — inner (`agent_middleware` end, D2b). Logs
+  model calls *inside* `CodeModelRetryMiddleware`'s retry loop, so each
+  retry attempt gets its own `model_start`/`model_end`/`model_error` instead
+  of the outer middleware seeing one pair for the whole retried call (검토
+  R2 — 4-3 requires a retry count, which the outer position cannot see).
+
+Both resolve `thread_id` independently at the top of every hook and pass it
+to every `EventWriter` call, so the two middleware (and repeated calls
+within one) always agree on which run an event belongs to — see the
+`EventWriter` docstring in `assistant/events.py` for why this replaced the
+original `contextvars.ContextVar` design.
 
 Fail-open (D4): every call into `EventWriter` is wrapped by `_safe()`, which
 swallows any exception and logs it at debug level. A failure to write a log
@@ -17,7 +31,6 @@ from __future__ import annotations
 
 import logging
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from langchain.agents.middleware.types import (
@@ -27,14 +40,14 @@ from langchain.agents.middleware.types import (
 )
 
 from assistant.events import (
+    CODE_CHANGED,
     MODEL_END,
     MODEL_ERROR,
     MODEL_START,
-    RUN_END,
     RUN_START,
     TOOL_END,
     TOOL_START,
-    EventWriter,
+    resolve_project_dir,
 )
 
 if TYPE_CHECKING:
@@ -50,15 +63,29 @@ if TYPE_CHECKING:
     from langgraph.runtime import Runtime
     from langgraph.types import Command
 
+    from assistant.events import EventWriter
+
 logger = logging.getLogger(__name__)
 
+_WRITE_TOOL_NAMES = frozenset({"write_file", "edit_file", "execute"})
+"""Tools whose successful `tool_end` also gets a derived `code_changed`
+event (D7 addendum: the official 4-1 wording names "코드 변경" explicitly)."""
 
-def _thread_id_from_config() -> str | None:
+
+def _safe(action: Callable[[], None]) -> None:
+    """Fail-open (D4): run `action`, swallow and log any exception."""
+    try:
+        action()
+    except Exception:  # noqa: BLE001 - logging must never break the agent
+        logger.debug("assistant.observability: swallowed logging failure", exc_info=True)
+
+
+def thread_id_from_config() -> str | None:
     """Best-effort thread id lookup (§7 risk: base `before_agent` has no config).
 
-    Returns:
-        The ambient thread id, or `None` if it cannot be determined — the
-        caller falls back to a random run-id suffix rather than failing.
+    Confirmed present and identical across `before_agent`/`wrap_tool_call`/
+    `after_agent` in a real headless run — see `EventWriter`'s docstring for
+    why this, not a `ContextVar`, is the run-lookup key.
     """
     try:
         from langgraph.config import get_config
@@ -110,139 +137,198 @@ def _tool_call_result_summary(result: object) -> dict[str, Any]:
 
 
 class EventLoggerMiddleware(AgentMiddleware):
-    """Appends a JSONL trail of one run's model/tool activity to `runs/`.
+    """Outer logger: run boundary and tool calls (D2).
 
-    Installed **first** in `agent_middleware` (D2) so it sees tool calls that
-    inner middleware (e.g. the Step 3 plan gate) blocks. One instance tracks
-    at most one open run at a time, matching dcode's single active
-    conversation turn per agent instance.
+    Installed **first** in `agent_middleware` so it sees tool calls that
+    inner middleware (e.g. the Step 3 plan gate) blocks.
     """
 
     trace_policy = TracePolicy(process_inputs=omit_payload)
     """Never trace this middleware's own hook inputs — the redacted log file
     is the intended audit trail, not the LangSmith span payload."""
 
-    def __init__(self, runs_dir: Path | None = None) -> None:
-        """Create the middleware.
-
-        Args:
-            runs_dir: Where to write `<run_id>/events.jsonl` under. Defaults
-                to `./runs` (the CLI runs from the repo root — see F2 in
-                `docs/plan/STEP2_PLAN.md`).
-        """
+    def __init__(self, event_writer: EventWriter) -> None:
+        """Args: event_writer: Shared writer, constructor-injected (D2b/I2)."""
         super().__init__()
-        self._runs_dir = runs_dir if runs_dir is not None else Path.cwd() / "runs"
-        self._writer: EventWriter | None = None
-        self._run_started_at: float = 0.0
-        self._event_count = 0
-        self._error_count = 0
+        self._ev = event_writer
 
-    # --- fail-open plumbing (D4) -----------------------------------------
-
-    def _safe(self, action: Callable[[], None]) -> None:
-        try:
-            action()
-        except Exception:  # noqa: BLE001 - logging must never break the agent
-            logger.debug("EventLoggerMiddleware: swallowed logging failure", exc_info=True)
-
-    def _record(self, event_type: str, **kwargs: Any) -> None:  # noqa: ANN401
-        """Record with already-safe-to-evaluate kwargs (no I/O, unlikely to raise)."""
-        self._record_lazy(event_type, lambda: kwargs)
-
-    def _record_lazy(self, event_type: str, build: Callable[[], dict[str, Any]]) -> None:
-        """Record with a kwargs builder evaluated *inside* the fail-open guard.
-
-        Use this whenever building the payload does more than reference
-        already-known values — e.g. reading `state`, calling `Path.cwd()`, or
-        inspecting a handler's result. Evaluating those eagerly as plain call
-        arguments would run them *outside* `_safe()`'s try/except, defeating
-        D4 (this was a real bug: `Path.cwd()`/`state` inspection in
-        `before_agent` could raise and escape uncaught before D9's fix).
-        """
-        writer = self._writer
-        if writer is None:
-            return
-
-        def _write() -> None:
-            kwargs = build()
-            writer.record(event_type, **kwargs)
-            self._event_count += 1
-            if kwargs.get("status") == "error":
-                self._error_count += 1
-
-        self._safe(_write)
-
-    # --- run boundary: before_agent / after_agent ------------------------
+    # --- run boundary -------------------------------------------------
 
     def before_agent(self, state: AgentState[Any], runtime: Runtime[Any]) -> dict[str, Any] | None:
         """Start a new run, closing a previous one left open by an interrupt."""
-        if self._writer is not None:
+        thread_id = thread_id_from_config()
+
+        if self._ev.current_run_id(thread_id) is not None:
             # §7 risk: after_agent does not fire across a HITL interrupt.
-            self._record(RUN_END, status="interrupted", data={"reason": "next_run_started"})
+            _safe(
+                lambda: self._ev.close_run(
+                    status="interrupted", extra={"reason": "next_run_started"}, thread_id=thread_id
+                )
+            )
 
-        thread_id = _thread_id_from_config()
-
-        def _start() -> None:
-            self._writer = EventWriter(self._runs_dir, thread_id=thread_id)
-            self._run_started_at = time.monotonic()
-            self._event_count = 0
-            self._error_count = 0
-
-        self._safe(_start)
-        self._record_lazy(
-            RUN_START,
-            lambda: {
-                "data": {
+        _safe(lambda: self._ev.start_run(thread_id=thread_id))
+        _safe(
+            lambda: self._ev.record(
+                RUN_START,
+                thread_id=thread_id,
+                data={
                     "user_input": _last_human_text(state),
                     "thread_id": thread_id,
-                    "cwd": str(Path.cwd()),
-                }
-            },
+                    "cwd": str(resolve_project_dir()),
+                },
+            )
         )
         return None
 
     def after_agent(self, state: AgentState[Any], runtime: Runtime[Any]) -> dict[str, Any] | None:  # noqa: ARG002
         """Close the run started by `before_agent`."""
-        dur_ms = (time.monotonic() - self._run_started_at) * 1000
-        writer = self._writer
-        self._record(
-            RUN_END,
-            status="ok",
-            dur_ms=dur_ms,
-            data={"event_count": self._event_count, "error_count": self._error_count},
-        )
-        # A headless one-shot run (`dcode -n`) was observed to exit the whole
-        # process within microseconds of after_agent returning — before the
-        # writer thread ever got scheduled — losing every event for the run.
-        # `Queue.join()` blocks on `threading.Lock.acquire`, which dcode's
-        # Blockbuster guard explicitly exempts (S11), so this is safe to call
-        # from the event loop thread. Bounded by D9's worker idle timeout.
-        if writer is not None:
-            self._safe(writer.flush)
-        self._writer = None
+        thread_id = thread_id_from_config()
+        _safe(lambda: self._ev.close_run(status="ok", thread_id=thread_id))
+        _safe(self._ev.flush)
         return None
 
-    # --- model calls -------------------------------------------------------
+    # --- tool calls -----------------------------------------------------
+
+    def wrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
+    ) -> ToolMessage | Command[Any]:
+        """Time and log one tool call (sync graph path)."""
+        thread_id = thread_id_from_config()
+        name = request.tool_call.get("name", "unknown")
+        _safe(
+            lambda: self._ev.record(
+                TOOL_START, thread_id=thread_id, name=name, data={"args": request.tool_call.get("args", {})}
+            )
+        )
+        start = time.monotonic()
+        try:
+            result = handler(request)
+        except Exception as exc:
+            _safe(
+                lambda: self._ev.record(
+                    TOOL_END,
+                    thread_id=thread_id,
+                    name=name,
+                    status="error",
+                    dur_ms=(time.monotonic() - start) * 1000,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+            )
+            raise
+        self._log_tool_end(thread_id, name, result, start)
+        return result
+
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
+    ) -> ToolMessage | Command[Any]:
+        """Time and log one tool call (async graph path — S4: the common one)."""
+        thread_id = thread_id_from_config()
+        name = request.tool_call.get("name", "unknown")
+        _safe(
+            lambda: self._ev.record(
+                TOOL_START, thread_id=thread_id, name=name, data={"args": request.tool_call.get("args", {})}
+            )
+        )
+        start = time.monotonic()
+        try:
+            result = await handler(request)
+        except Exception as exc:
+            _safe(
+                lambda: self._ev.record(
+                    TOOL_END,
+                    thread_id=thread_id,
+                    name=name,
+                    status="error",
+                    dur_ms=(time.monotonic() - start) * 1000,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+            )
+            raise
+        self._log_tool_end(thread_id, name, result, start)
+        return result
+
+    def _log_tool_end(self, thread_id: str | None, name: str, result: object, start: float) -> None:
+        def _build() -> dict[str, Any]:
+            summary = _tool_call_result_summary(result)
+            return {
+                "name": name,
+                "status": summary["status"],
+                "dur_ms": (time.monotonic() - start) * 1000,
+                "data": {"result_len": summary.get("result_len")},
+            }
+
+        def _write() -> None:
+            kwargs = _build()
+            self._ev.record(TOOL_END, thread_id=thread_id, **kwargs)
+            if name in _WRITE_TOOL_NAMES and kwargs["status"] == "success":
+                self._ev.record(CODE_CHANGED, thread_id=thread_id, name=name, data=kwargs["data"])
+
+        _safe(_write)
+
+
+class EventLoggerInnerMiddleware(AgentMiddleware):
+    """Inner logger: per-attempt model calls (D2b, 검토 R2).
+
+    Installed **last** in `agent_middleware`, i.e. inside
+    `CodeModelRetryMiddleware`'s retry loop, so a retried model call produces
+    one `model_start`/`model_end` (or `model_error`) pair *per attempt* with
+    an `attempt` field — the outer middleware, being outside the retry loop,
+    would only ever see the whole retried call as a single pair with no way
+    to recover a retry count (4-3 requires one).
+    """
+
+    trace_policy = TracePolicy(process_inputs=omit_payload)
+
+    def __init__(self, event_writer: EventWriter) -> None:
+        """Args: event_writer: Same shared writer as `EventLoggerMiddleware`."""
+        super().__init__()
+        self._ev = event_writer
+        self._attempts_by_request: dict[int, int] = {}
+        """1-based attempt count per in-flight logical model call, keyed by
+        `id(request)`. `CodeModelRetryMiddleware`'s retry loop calls
+        `handler(request)` again with the *same* `request` object for each
+        retry (its own `call()` closure captures one `request` per logical
+        call), so identity is a valid correlation key for attempts of the
+        same call. Popped on success; a call that exhausts its retries and
+        is never retried again leaks its entry (bounded by call volume in a
+        single session — acceptable for this project's scope)."""
 
     def wrap_model_call(
         self,
         request: ModelRequest[Any],
         handler: Callable[[ModelRequest[Any]], ModelResponse[Any]],
     ) -> ModelResponse[Any]:
-        """Time and log one model call (sync graph path)."""
-        self._record(MODEL_START, name=_model_name(request))
+        """Time and log one model-call *attempt* (sync graph path)."""
+        thread_id = thread_id_from_config()
+        key = id(request)
+        attempt = self._attempts_by_request.get(key, 0) + 1
+        self._attempts_by_request[key] = attempt
+        _safe(
+            lambda: self._ev.record(
+                MODEL_START, thread_id=thread_id, name=_model_name(request), attempt=attempt
+            )
+        )
         start = time.monotonic()
         try:
             response = handler(request)
         except Exception as exc:
-            self._record(
-                MODEL_ERROR,
-                name=_model_name(request),
-                dur_ms=(time.monotonic() - start) * 1000,
-                error=f"{type(exc).__name__}: {exc}",
+            _safe(
+                lambda: self._ev.record(
+                    MODEL_ERROR,
+                    thread_id=thread_id,
+                    name=_model_name(request),
+                    attempt=attempt,
+                    dur_ms=(time.monotonic() - start) * 1000,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
             )
             raise
-        self._log_model_end(request, response, start)
+        self._attempts_by_request.pop(key, None)
+        self._log_model_end(thread_id, request, response, start, attempt)
         return response
 
     async def awrap_model_call(
@@ -250,24 +336,42 @@ class EventLoggerMiddleware(AgentMiddleware):
         request: ModelRequest[Any],
         handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
     ) -> ModelResponse[Any]:
-        """Time and log one model call (async graph path — S4: the common one)."""
-        self._record(MODEL_START, name=_model_name(request))
+        """Time and log one model-call *attempt* (async graph path — S4)."""
+        thread_id = thread_id_from_config()
+        key = id(request)
+        attempt = self._attempts_by_request.get(key, 0) + 1
+        self._attempts_by_request[key] = attempt
+        _safe(
+            lambda: self._ev.record(
+                MODEL_START, thread_id=thread_id, name=_model_name(request), attempt=attempt
+            )
+        )
         start = time.monotonic()
         try:
             response = await handler(request)
         except Exception as exc:
-            self._record(
-                MODEL_ERROR,
-                name=_model_name(request),
-                dur_ms=(time.monotonic() - start) * 1000,
-                error=f"{type(exc).__name__}: {exc}",
+            _safe(
+                lambda: self._ev.record(
+                    MODEL_ERROR,
+                    thread_id=thread_id,
+                    name=_model_name(request),
+                    attempt=attempt,
+                    dur_ms=(time.monotonic() - start) * 1000,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
             )
             raise
-        self._log_model_end(request, response, start)
+        self._attempts_by_request.pop(key, None)
+        self._log_model_end(thread_id, request, response, start, attempt)
         return response
 
     def _log_model_end(
-        self, request: ModelRequest[Any], response: ModelResponse[Any], start: float
+        self,
+        thread_id: str | None,
+        request: ModelRequest[Any],
+        response: ModelResponse[Any],
+        start: float,
+        attempt: int,
     ) -> None:
         def _build() -> dict[str, Any]:
             ai_message = _response_ai_message(response)
@@ -282,6 +386,7 @@ class EventLoggerMiddleware(AgentMiddleware):
             return {
                 "name": _model_name(request),
                 "status": "success",
+                "attempt": attempt,
                 "dur_ms": (time.monotonic() - start) * 1000,
                 "data": {
                     "input_tokens": usage.get("input_tokens") if usage else None,
@@ -290,64 +395,4 @@ class EventLoggerMiddleware(AgentMiddleware):
                 },
             }
 
-        self._record_lazy(MODEL_END, _build)
-
-    # --- tool calls -----------------------------------------------------
-
-    def wrap_tool_call(
-        self,
-        request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
-    ) -> ToolMessage | Command[Any]:
-        """Time and log one tool call (sync graph path)."""
-        name = request.tool_call.get("name", "unknown")
-        self._record(TOOL_START, name=name, data={"args": request.tool_call.get("args", {})})
-        start = time.monotonic()
-        try:
-            result = handler(request)
-        except Exception as exc:
-            self._record(
-                TOOL_END,
-                name=name,
-                status="error",
-                dur_ms=(time.monotonic() - start) * 1000,
-                error=f"{type(exc).__name__}: {exc}",
-            )
-            raise
-        self._log_tool_end(name, result, start)
-        return result
-
-    async def awrap_tool_call(
-        self,
-        request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
-    ) -> ToolMessage | Command[Any]:
-        """Time and log one tool call (async graph path — S4: the common one)."""
-        name = request.tool_call.get("name", "unknown")
-        self._record(TOOL_START, name=name, data={"args": request.tool_call.get("args", {})})
-        start = time.monotonic()
-        try:
-            result = await handler(request)
-        except Exception as exc:
-            self._record(
-                TOOL_END,
-                name=name,
-                status="error",
-                dur_ms=(time.monotonic() - start) * 1000,
-                error=f"{type(exc).__name__}: {exc}",
-            )
-            raise
-        self._log_tool_end(name, result, start)
-        return result
-
-    def _log_tool_end(self, name: str, result: object, start: float) -> None:
-        def _build() -> dict[str, Any]:
-            summary = _tool_call_result_summary(result)
-            return {
-                "name": name,
-                "status": summary["status"],
-                "dur_ms": (time.monotonic() - start) * 1000,
-                "data": {"result_len": summary.get("result_len")},
-            }
-
-        self._record_lazy(TOOL_END, _build)
+        _safe(lambda: self._ev.record(MODEL_END, thread_id=thread_id, **_build()))

@@ -3070,7 +3070,12 @@ def create_cli_agent(
     # [해설] → AutoModeHITL|AsyncApprovalHITL → ServerHooks → (GoalCriteria) → CodeModelRetry → ToolError(task) → ReliableRubric
     # [해설] → (extension) → [SDK tail] profile extras → PromptCaching → (ToolExclusion) → 모델
     # Build middleware stack based on enabled features
+    from assistant.events import EventWriter
+    from assistant.observability import EventLoggerInnerMiddleware, EventLoggerMiddleware
+
+    _ev = EventWriter()
     agent_middleware: list[AgentMiddleware[Any, Any]] = [
+        EventLoggerMiddleware(_ev),
         ConfigurableModelMiddleware(
             cli_max_retries=cli_max_retries,
             environ=environment,
@@ -3733,6 +3738,9 @@ def create_cli_agent(
         from deepagents_code.extensions.hosting import ExtensionRuntimeMiddleware
 
         agent_middleware.append(ExtensionRuntimeMiddleware(extension_registry))
+    # D2b/검토 R2: last, so it sits *inside* CodeModelRetryMiddleware's retry loop
+    # and logs one model_start/model_end pair per retry attempt (see assistant/observability.py).
+    agent_middleware.append(EventLoggerInnerMiddleware(_ev))
     # [해설][흐름] 10) SDK 호출. `create_deep_agent` 내부 순서(libs/deepagents/deepagents/graph.py):
     # [해설] 모델 해석·harness profile → 선언형 서브에이전트 스택 구성(fork면 부모 middleware 이름 병합) → GP 자동 추가 생략(dcode가 이미 줌)
     # [해설] → core [Filesystem, SubAgent, Summarization, Patch, (AsyncSubAgent)] → core 이름 캡처 → profile extras + prompt caching
