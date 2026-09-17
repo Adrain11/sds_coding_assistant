@@ -127,12 +127,23 @@ def _tool_call_result_summary(result: object) -> dict[str, Any]:
 
     `handler()` for `wrap_tool_call` returns a `ToolMessage` or a `Command`
     (S3) — only the former carries a `status`/`content`.
+
+    Most tool failures (e.g. `read_file` on a missing path) never raise —
+    the tool returns a `ToolMessage(status="error", content="...")`
+    instead, which is the success path as far as `wrap_tool_call` is
+    concerned. A real TUI run showed this landing as `status="error"` with
+    no `error` text at all (only `result_len`) — `report fail`/`show` could
+    point at the failure but not say why. `content` *is* the reason in this
+    case, so surface it the same way the `except` branch's `error=` does.
     """
     status = getattr(result, "status", "success")
     content = getattr(result, "content", None)
     summary: dict[str, Any] = {"status": status}
     if content is not None:
-        summary["result_len"] = len(content) if isinstance(content, str) else len(str(content))
+        content_str = content if isinstance(content, str) else str(content)
+        summary["result_len"] = len(content_str)
+        if status == "error":
+            summary["error"] = content_str
     return summary
 
 
@@ -263,6 +274,7 @@ class EventLoggerMiddleware(AgentMiddleware):
                 "name": name,
                 "status": summary["status"],
                 "dur_ms": (time.monotonic() - start) * 1000,
+                "error": summary.get("error"),
                 "data": {"result_len": summary.get("result_len")},
             }
 

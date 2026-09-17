@@ -100,6 +100,29 @@ def test_wrap_tool_call_read_only_tool_has_no_code_changed(tmp_path: Path) -> No
     assert [e["type"] for e in events] == ["tool_start", "tool_end"]
 
 
+def test_wrap_tool_call_captures_error_content_without_raising(tmp_path: Path) -> None:
+    """Regression: a tool that fails by *returning* status="error" (no
+    exception — e.g. read_file on a missing path) must still carry a
+    human-readable `error` field. A real TUI run showed `tool_end
+    status=error` with no `error` text at all — only `result_len` — because
+    `_tool_call_result_summary` never looked at `content` for the reason.
+    """
+    ev = EventWriter(tmp_path)
+    mw = EventLoggerMiddleware(ev)
+    mw.before_agent({"messages": []}, runtime=None)
+    run_id = ev.current_run_id()
+
+    result = mw.wrap_tool_call(
+        _tool_request("read_file", {"file_path": "missing.txt"}),
+        lambda _req: _FakeToolMessage(status="error", content="Error: file not found: missing.txt"),
+    )
+
+    assert isinstance(result, _FakeToolMessage)  # not raised — this is the ToolMessage path
+    events = [e for e in _events(ev, run_id) if e["type"] == "tool_end"]
+    assert events[0]["status"] == "error"
+    assert events[0]["error"] == "Error: file not found: missing.txt"
+
+
 def test_wrap_tool_call_records_error_and_reraises(tmp_path: Path) -> None:
     ev = EventWriter(tmp_path)
     mw = EventLoggerMiddleware(ev)
