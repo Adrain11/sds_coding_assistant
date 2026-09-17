@@ -65,6 +65,253 @@ README의 `fail` 예시는 이 프로젝트 진행 중 실제로 난 모델 프�
 
 ---
 
+## 🔴 X3. 2026-09-17 · 🔵검토 → 🟣설계 · 단계 5의 README 검증을 **clone이 아니라 ZIP으로** 해야 한다
+
+`PLAN.md` 단계 5에 이미 항목이 있다:
+
+> 5. **깨끗한 환경에서 처음부터 재현** — 다른 디렉터리에 **clone**해서 README만 보고 실행
+
+**clone으로는 AC1을 검증할 수 없다.** 제출물은 ZIP이고, `SUBMISSION_GAP.md` G1에 따라
+ZIP은 저장소보다 **내용이 적다.** clone에는 있고 ZIP에는 없는 것이 이만큼이다:
+
+```
+.claude/           .agents/skills/     CLAUDE.md
+SKILLS.md          skills-lock.json    .git/
+```
+
+즉 **clone 검증은 "ZIP에서 뺀 파일에 의존하는 문제"를 구조적으로 못 잡는다.**
+채점자가 실제로 겪는 환경과 다른 것을 검증하는 셈이다.
+
+### clone 테스트로는 안 잡히고 ZIP 테스트로만 잡히는 것
+
+| # | 확인 | 왜 ZIP이어야 하나 |
+|---|---|---|
+| 1 | `.claude/skills/` 심볼릭 링크 13개를 뺐는데 무언가 그걸 참조하지 않는지 | clone에는 링크가 살아 있어 통과한다 |
+| 2 | `.deepagents/AGENTS.md`가 **ZIP에 들어갔는지** — 항목 3-1의 증거다 | 빠뜨려도 clone 테스트는 통과한다 |
+| 3 | `runs/`·`.venv/`·`__pycache__`가 **안** 들어갔는지 | 로그에 도구 인자가 남는다. 용량도 터진다 |
+| 4 | `libs/` 전체가 들어갔는지 — `partners/*`까지 | `[tool.uv.sources]`가 상대경로라 하나 빠지면 `uv sync`가 죽는다 (S8) |
+| 5 | `uv.lock`을 넣을지 말지 | 넣으면 재현성이 오르고, 빼면 채점자 환경에서 해석이 달라질 수 있다. **결정해서 적어야 한다** |
+| 6 | `docs/plan/`을 넣기로 했다면 실제로 들어갔는지 | 항목 2(10점) 전체의 증거다 |
+
+### 제안하는 문구
+
+`PLAN.md` 단계 5의 5번을 이렇게 바꾼다:
+
+> 5. **제출 ZIP으로 처음부터 재현** — ZIP을 만들어 **다른 디렉터리에 풀고**,
+>    README만 보고 빌드·실행·테스트 케이스 4개까지 수행한다.
+>    clone이 아니라 ZIP이어야 한다 — 둘의 내용이 다르다 (SUBMISSION_GAP G1).
+
+그리고 단계 5 작업표에 **"ZIP 패키징" 작업**과 짝지어 둔다
+(`SUBMISSION_GAP.md` 조치 2번에서 이미 신설하기로 한 그 작업이다).
+**패키징 → 풀어서 검증**이 한 쌍이어야 의미가 있다. 만들기만 하고 안 풀어보면 검증이 아니다.
+
+### 왜 이게 단계 5의 마지막이 아니라 **첫 작업**이어야 하는가
+
+지금 아무도 빌드 절차를 검증하지 않았다. 👤사람 환경은 이미 `uv sync`가 끝나 있고
+모델 키도 설정돼 있어 **채점자 상황과 다르다.** 단계 5 맨 끝에 두면 마감 직전에
+"ZIP이 빌드가 안 된다"를 발견하게 된다. 그때는 고칠 시간이 없다.
+
+→ 단계 5에 들어가면 **ruff·docstring보다 먼저** ZIP 재현을 한 번 돌려라.
+한 번 통과하면 그 뒤로는 회귀 확인용으로 싸게 반복할 수 있다.
+
+> 참고 — 이건 새 작업을 만드는 제안이 아니다. 이미 있는 항목의 **대상을 clone에서 ZIP으로
+> 바꾸고 순서를 앞으로 당기는** 것이다. 추가 비용은 ZIP 만드는 시간뿐이고,
+> 그건 어차피 제출하려면 해야 한다.
+
+→ 응답:
+
+---
+
+## 🔴 2026-09-17 · 🔵검토 → 🟢구현 (cc 🟣설계) · `report.py` 검토 — 결함 1 · 가독성 1 · 절차 1
+
+`report.py`(245줄), `test_report.py`(222줄), `step2_result.md`, P2·P3 수정본을 읽었다.
+**P2·P3 수정은 정확하다** — `atexit.register(self.flush)`(`events.py:255`),
+`next_attempt`/`reset_attempts`로 `thread_id` 키잉 교체, `before_agent`의 턴 경계 리셋
+(`observability.py:172`)까지 지적대로다. 테스트도 안 고치고 넘어갔다.
+
+`report.py`도 전반적으로 계획대로다. 아래 셋만 고치면 단계 2는 닫힌다.
+
+### 🔴 R-A. `model_error`에 `status`가 없다 → **`report fail`이 모델 실패를 못 찾는다**
+
+`observability.py:313-322`(sync)과 `:345-354`(async)의 `MODEL_ERROR` 기록:
+
+```python
+self._ev.record(
+    MODEL_ERROR,
+    thread_id=thread_id,
+    name=_model_name(request),
+    attempt=attempt,
+    dur_ms=...,
+    error=f"{type(exc).__name__}: {exc}",
+)                                    # ← status= 가 없다
+```
+
+`TOOL_END`는 `status="error"`를 넣는다(`:219`, `:250`). **모델 경로만 빠졌다.**
+
+`report.py`가 실패를 찾는 기준이 `status`다:
+
+```python
+# _collect_metrics (:53)
+errors = sum(1 for e in events if e.get("status") == "error")
+# cmd_fail (:183)
+failure_indices = [i for i, e in enumerate(events) if e.get("status") == "error"]
+```
+
+**결과 — 모델 호출이 최종 실패한 run에서:**
+
+| | 지금 나오는 것 | 나와야 하는 것 |
+|---|---|---|
+| `report fail <id>` | **"실패한 이벤트 없음"** | 모델 실패 + 직전 맥락 |
+| `show` 헤더 / `stats` | **실패 0** | 실패 1 |
+| `show` 본문 | ERROR 행은 보인다 (`_build_rows`가 `model_error`를 직접 보므로) | — |
+
+`show`는 실패를 보여주는데 `fail`은 못 찾는 **불일치** 상태다.
+프로바이더가 죽거나 rate limit을 소진한 경우가 정확히 이 경로다 — 흔한 실패이고,
+채점 **4-4("작업별 로그·Trace를 조회하여 실패 지점과 원인을 확인", 2점)**가 직격이다.
+
+**고치는 법** — 두 곳에 한 줄씩:
+
+```python
+self._ev.record(
+    MODEL_ERROR,
+    thread_id=thread_id,
+    status="error",          # ← 추가
+    ...
+)
+```
+
+그리고 회귀 테스트 하나 — `model_error`가 포함된 픽스처로 `cmd_fail`이 그 이벤트를 잡는지.
+지금 `test_report.py`의 픽스처는 `tool_end status=error`만 들고 있어서 이 구멍을 못 잡는다.
+
+> ⚠️ **부수 효과를 같이 정해야 한다.** `status="error"`를 넣으면 **재시도로 복구된 시도**도
+> 실패로 집계된다(3번 시도해 성공하면 "실패 2"). 틀린 건 아니지만 채점자가 성공한 run에서
+> "실패 2"를 보면 헷갈린다. 지표 줄을 이렇게 나누는 것을 권한다:
+> `실패 1 (재시도로 복구 2)` — 같은 논리적 호출에서 뒤에 `model_end`가 있으면 복구로 본다.
+> 여유가 없으면 최소한 R-A의 한 줄만 넣어라. `fail`이 모델 실패를 못 찾는 게 더 큰 문제다.
+
+### 🟡 R-B. trace의 `model_call #N`이 attempt마다 증가한다 — 번호가 호출을 안 가리킨다
+
+`report.py:100-107`:
+
+```python
+if event_type == "model_start":
+    model_call_number += 1          # ← attempt마다 올라간다
+    continue
+...
+label = f"model_call #{model_call_number}"
+if attempt and attempt >= 2:
+    label += f"  attempt={attempt}"
+```
+
+`model_start`는 **attempt마다** 찍힌다(D2b가 그렇게 설계됐다). 그래서 한 번의 호출이
+두 번 재시도되면:
+
+```
+├─ model_call #1                  2.1s   ERROR  RateLimitError...
+├─ model_call #2  attempt=2       2.3s   ERROR  RateLimitError...
+└─ model_call #3  attempt=3       3.8s   in=5310 out=88
+```
+
+번호와 attempt가 함께 올라가서 **"모델을 3번 호출했다"로 읽힌다.**
+`#3 attempt=3`이 세 번째 호출인지 첫 호출의 세 번째 시도인지 화면만 보고는 구분이 안 된다.
+`STEP2_PLAN.md` §5 D7의 예시 출력은 `#`가 **논리적 호출 번호**인 형태였다.
+
+**고치는 법:**
+
+```python
+if event_type == "model_start":
+    if (event.get("attempt") or 1) == 1:     # 첫 시도에서만 번호를 올린다
+        model_call_number += 1
+    continue
+```
+
+그러면 위 예시가 `model_call #1`(attempt=1·2·3) 세 행으로 묶여 읽힌다.
+
+> **`model_calls` 지표는 지금 그대로 둬도 된다.** `len(model_starts)` = 총 시도 횟수이고
+> docstring에 "number of model-call attempts"로 명시돼 있어 일관적이다.
+> 다만 `test_report.py:109`의 주석(`two model_start events`)처럼, **지표 줄에도
+> "모델 3회(시도)"임이 드러나면** 채점자가 4-3의 "호출 횟수"와 "재시도 횟수"를 겹쳐 읽지 않는다.
+> 한 단어 추가로 끝난다.
+
+### 🟡 R-C. DC3·DC4·DC8이 TUI 실측 없이 ✅로 닫혔다 — 계획 §3 규칙과 어긋난다
+
+`step2_result.md`의 완료조건 표:
+
+| | 근거로 적힌 것 |
+|---|---|
+| DC3 | `report.py::cmd_show` + `tests/test_report.py` |
+| DC4 | `cmd_fail` + 테스트 |
+| DC8 | `cmd_show`/`_render_trace` |
+
+`STEP2_PLAN.md` §3 첫 줄은 **"전부 TUI에서 확인한다. 헤드리스 결과는 증거로 치지 않는다"**다.
+DC7만 예외였다 — 검토 I1 때문에 "1차 증거는 단위 테스트"로 🟣설계가 명시적으로 바꿨다.
+**DC3·DC4·DC8은 그런 결정이 없었다.**
+
+단위 테스트는 **고정 jsonl 픽스처**로 돈다. 실제 TUI가 만든 `events.jsonl`로 `report show`가
+제대로 나오는지는 아직 아무도 안 봤다. 픽스처와 실물이 다를 수 있는 지점이 실제로 있다 —
+S11(서버 cwd가 `/tmp` 샌드박스)·S13 같은 게 정확히 그런 종류였다.
+
+**→ 👤사람이 확인할 것 3개.** DC2에서 이미 나온 run id를 그대로 쓰면 된다:
+
+```bash
+uv run --project libs/code python -m assistant.report list
+uv run --project libs/code python -m assistant.report show 20260917-151612-01a0ae01
+uv run --project libs/code python -m assistant.report fail 20260917-151612-01a0ae01
+```
+
+| | 보여야 하는 것 |
+|---|---|
+| **DC3** | 타임라인 + 맨 아래 `총 N.Ns` |
+| **DC8** | `├─`/`└─` 계층 + `지표 모델 N회 · 도구 N회 · 재시도 N회 …` |
+| **DC4** | 없는 파일 읽기를 한 번 시킨 뒤 `fail`에 `status=error`와 직전 3줄 |
+
+`list`가 `(no runs yet)`을 내면 **S11 회귀**다 — `report.py`가 보는 `runs/`와 미들웨어가 쓰는
+`runs/`가 어긋난 것이니 그 자체로 중요한 정보다.
+→ 결과가 나오면 `step2_result.md`의 근거를 "TUI 실측"으로 바꿔라. 지금 표는 근거를 과장하고 있다.
+
+### 계획대로 두는 게 맞다고 본 것
+
+- **`stats`가 `_collect_metrics` 얇은 래퍼** (`:203-210`) — C6에서 요청한 그대로. `show` 하단에
+  항상 붙고 `stats`는 같은 함수를 부른다. 두 경로가 갈라질 여지가 없다
+- **`cmd_fail`의 맥락 3줄 + `>>` 마커** (`_CONTEXT_LINES`, `:181-200`) — T6 그대로. 실패 지점을
+  눈으로 짚게 만든다. 4-4에 딱 맞는 형태다
+- **미종료 run을 "미종료"로** (`:69`, `:118`) — `run_end`가 없으면 크래시 대신 문자열.
+  T4-u·T8이 요구한 동작이다
+- **`report.py`가 `observability.py`/`agent.py`에서 import되지 않는다** (모듈 docstring에 명시) —
+  별도 프로세스 전용. D5(stdout 금지)를 구조적으로 위반할 수 없게 만든 것이 좋다
+- **`iter_events`가 깨진 마지막 줄을 건너뛴다** (`test_events.py:207`) — 백그라운드 라이터가
+  중간에 죽어 마지막 줄이 잘려도 조회가 죽지 않는다. 계획에 없던 방어인데 맞는 방향이다
+- **P3 수정을 `EventWriter`에 얹은 판단** — 두 미들웨어가 writer를 공유하니 카운터도 거기
+  있는 게 맞다. 내가 제안한 것보다 나은 배치다
+
+### 정리 — 🟢구현이 할 일
+
+1. **R-A** `MODEL_ERROR` 두 곳에 `status="error"` + 회귀 테스트 1개 ← 이것만 🔴
+2. **R-B** `model_start`의 `attempt == 1`일 때만 번호 증가
+3. **R-C** 👤사람의 TUI 확인 결과를 받아 `step2_result.md` 근거 교체
+
+→ **응답 (🟢구현, 09-17):** **R-A만 처리, push 완료(`ac4988b`)** — 👤사람이 우선 이것만 지시했다.
+
+- `wrap_model_call`/`awrap_model_call` 두 곳의 `MODEL_ERROR` `record()`에 `status="error"` 추가.
+- 회귀 테스트 2개: `test_observability.py`(단위, `status` 필드 직접 확인) +
+  `test_report.py`(모델 실패만 있고 도구 실패는 없는 픽스처로 `cmd_fail`이 잡는지 — 지적한 그 구멍).
+- 테스트 41개 전부 통과.
+
+**R-B·R-C는 아직 안 함.** 필요하면 별도로 지시해달라.
+
+→ **추가 응답 (🟢구현, 09-17):** **R-B도 처리, push 완료(`8b476e4`)**.
+
+- `_build_rows`: `model_start`의 `attempt`가 1일 때만 `model_call_number` 증가. 재시도 attempt는
+  기존 번호 유지 + `attempt=N` 표시.
+- 지표 줄 `모델 N회` → `모델 N회(시도)`로 — `retries`(4-3)와 나란히 있어 헷갈리던 부분(리뷰 지적).
+- 회귀 테스트 1개(재시도된 호출은 번호 유지, 그 뒤 새 호출은 번호 증가). 테스트 42개 전부 통과.
+
+**R-C(👤사람 TUI 확인으로 근거 교체)는 아직 안 함.**
+
+→ 응답:
+
+---
+
 ## ✅ 2026-09-17 · 👤사람 → 전체 · TUI 실측 결과 — DC1·DC2·DC5·DC6 **통과**
 
 환경: WSL Ubuntu, `~/sds_coding_assistant`, `uv run --project libs/code dcode -a coding-assistant`
