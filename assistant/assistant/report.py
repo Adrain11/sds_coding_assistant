@@ -24,6 +24,9 @@ from typing import Any
 from assistant.events import (
     CODE_CHANGED,
     GATE_BLOCK,
+    IMPROVE_END,
+    IMPROVE_VERIFIED,
+    MEMORY_HIT,
     PLAN_APPROVED,
     PLAN_CREATED,
     PLAN_REVIEWED,
@@ -158,6 +161,41 @@ def _build_rows(events: list[dict[str, Any]]) -> list[_Row]:
             )
         elif event_type in (PLAN_CREATED, PLAN_REVIEWED, PLAN_APPROVED, CODE_CHANGED):
             rows.append(_Row(*_plan_lifecycle_row(event_type, event), is_error=False))
+        elif event_type == MEMORY_HIT:
+            data = event.get("data") or {}
+            rows.append(
+                _Row(
+                    f"memory_hit  {event.get('name', '?')}",
+                    None,
+                    f"refs={data.get('refs', [])}",
+                    is_error=False,
+                )
+            )
+        elif event_type == IMPROVE_END:
+            data = event.get("data") or {}
+            is_error = data.get("status") == "error"
+            target = data.get("target_path", "?")
+            detail = data.get("error") if is_error else f"target={target}"
+            rows.append(
+                _Row(
+                    f"improve_end  {event.get('name', '?')}",
+                    None,
+                    detail or "",
+                    is_error=is_error,
+                )
+            )
+        elif event_type == IMPROVE_VERIFIED:
+            data = event.get("data") or {}
+            improved = bool(data.get("improved"))
+            detail = f"before={data.get('before')} after={data.get('after')}"
+            rows.append(
+                _Row(
+                    f"improve_verified  {event.get('name', '?')}",
+                    None,
+                    detail,
+                    is_error=not improved,
+                )
+            )
         elif event_type == GATE_BLOCK:
             data = event.get("data") or {}
             rows.append(

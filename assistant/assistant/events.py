@@ -76,6 +76,7 @@ PLAN_APPROVED = "plan_approved"  # Step 3
 MEMORY_HIT = "memory_hit"  # Step 4
 IMPROVE_START = "improve_start"  # Step 4
 IMPROVE_END = "improve_end"  # Step 4
+IMPROVE_VERIFIED = "improve_verified"  # Step 4 (§5 M4 — added, not in D7's reservation)
 TEST_RUN = "test_run"  # Step 5
 
 # --- Redaction (D6 + C4) ---------------------------------------------------

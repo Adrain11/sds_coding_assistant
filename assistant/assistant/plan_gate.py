@@ -11,7 +11,11 @@ a plan file with `write_file` would need `write_file` to already be open,
 which is exactly what having no plan closes off. `PlanGateMiddleware`
 exposes `create_plan`/`review_plan`/`revise_plan`/`get_plan_status` as
 `self.tools` instead (the same pattern `AskUserMiddleware.tools[0]` uses —
-confirmed present in this dcode build, `agent.py:3131`).
+confirmed present in this dcode build, `agent.py:3131`). Step 4 adds
+`search_memory`/`propose_improvement`/`verify_improvement` to the same
+`self.tools` list — one more tool on an already-wired middleware, so
+`agent.py` still needs zero changes for memory/self-improvement either
+(`docs/plan/STEP4_PLAN.md` §4).
 
 **D4 — no `approve` tool.** Approval only happens out-of-band, from
 `python -m assistant.plan_gate approve <plan_id>`, run by a human in a
@@ -45,7 +49,17 @@ from langchain.agents.middleware.types import AgentMiddleware, TracePolicy, omit
 from langchain_core.messages import ToolMessage as LCToolMessage
 from langchain_core.tools import tool
 
-from assistant.events import GATE_BLOCK, PLAN_APPROVED, PLAN_CREATED, PLAN_REVIEWED
+from assistant import memory
+from assistant.events import (
+    GATE_BLOCK,
+    IMPROVE_END,
+    IMPROVE_START,
+    IMPROVE_VERIFIED,
+    MEMORY_HIT,
+    PLAN_APPROVED,
+    PLAN_CREATED,
+    PLAN_REVIEWED,
+)
 from assistant.observability import thread_id_from_config
 from assistant.plans import APPROVED, DRAFT, Plan, PlanError, PlanStore
 
@@ -240,6 +254,7 @@ class PlanGateMiddleware(AgentMiddleware):
             target_files: list[str],
             steps: list[str],
             test_plan: str,
+            memory_refs: list[str],
             allow_subagent: bool = False,
         ) -> str:
             """Create a new development plan in `draft` status.
@@ -259,6 +274,10 @@ class PlanGateMiddleware(AgentMiddleware):
                     blocked even after approval.
                 steps: Ordered implementation steps.
                 test_plan: How the change will be tested or verified.
+                memory_refs: `[Rn]`/`[Ln]` ids from `search_memory` that this
+                    plan is actually based on. Required and non-empty (Step
+                    4, 3-2) — a made-up id is rejected, not just an empty
+                    list, so citing memory here is real use, not a formality.
                 allow_subagent: Whether this plan may delegate work to a
                     subagent (`task`). Defaults to False (blocked).
 
@@ -266,6 +285,18 @@ class PlanGateMiddleware(AgentMiddleware):
                 The new plan's id and the next step (`review_plan`), or a
                 rejection message naming the invalid field.
             """
+            if not memory_refs:
+                return (
+                    "계획 생성 거부됨: memory_refs가 비어 있습니다. "
+                    "search_memory(query)로 관련 규칙/교훈을 먼저 찾아 인용하세요 "
+                    "(Step 4, 3-2)."
+                )
+            bad_refs = memory.invalid_refs(memory_refs, self._project_root)
+            if bad_refs:
+                return (
+                    f"계획 생성 거부됨: 존재하지 않는 memory_refs: {bad_refs}. "
+                    "search_memory로 실제 id를 확인하세요 (지어낸 인용 차단)."
+                )
             try:
                 plan = store.create(
                     title=title,
@@ -275,16 +306,25 @@ class PlanGateMiddleware(AgentMiddleware):
                     target_files=target_files,
                     steps=steps,
                     test_plan=test_plan,
+                    memory_refs=memory_refs,
                     allow_subagent=allow_subagent,
                 )
             except PlanError as exc:
                 return f"계획 생성 거부됨: {exc}"
+            thread_id = thread_id_from_config()
             _safe_record(
                 self._ev,
                 PLAN_CREATED,
-                thread_id_from_config(),
+                thread_id,
                 name=plan.title,
                 data={"plan_id": plan.plan_id, "target_files": plan.target_files},
+            )
+            _safe_record(
+                self._ev,
+                MEMORY_HIT,
+                thread_id,
+                name=plan.title,
+                data={"plan_id": plan.plan_id, "refs": memory_refs},
             )
             return (
                 f"계획 생성됨 (plan_id={plan.plan_id}, 상태=draft).\n"
@@ -347,6 +387,7 @@ class PlanGateMiddleware(AgentMiddleware):
             target_files: list[str] | None = None,
             steps: list[str] | None = None,
             test_plan: str | None = None,
+            memory_refs: list[str] | None = None,
             allow_subagent: bool | None = None,
         ) -> str:
             """Revise a plan, applying the reviewer's feedback; returns it to `draft`.
@@ -360,6 +401,8 @@ class PlanGateMiddleware(AgentMiddleware):
                 target_files: New target file list, or omit to leave unchanged.
                 steps: New step list, or omit to leave unchanged.
                 test_plan: New test plan, or omit to leave unchanged.
+                memory_refs: New `memory_refs` list, or omit to leave
+                    unchanged. Same existence check as `create_plan` (3-2).
                 allow_subagent: New subagent-delegation flag, or omit to leave
                     unchanged.
 
@@ -367,6 +410,15 @@ class PlanGateMiddleware(AgentMiddleware):
                 Confirmation, or a rejection if the plan is already `approved`
                 (an approved plan cannot be widened by editing it in place).
             """
+            if memory_refs is not None:
+                if not memory_refs:
+                    return (
+                        "수정 거부됨: memory_refs를 비울 수 없습니다 "
+                        "(3-2는 revise에서도 강제됩니다)."
+                    )
+                bad_refs = memory.invalid_refs(memory_refs, self._project_root)
+                if bad_refs:
+                    return f"수정 거부됨: 존재하지 않는 memory_refs: {bad_refs}."
             updates = {
                 "title": title,
                 "requirements": requirements,
@@ -375,6 +427,7 @@ class PlanGateMiddleware(AgentMiddleware):
                 "target_files": target_files,
                 "steps": steps,
                 "test_plan": test_plan,
+                "memory_refs": memory_refs,
                 "allow_subagent": allow_subagent,
             }
             try:
@@ -400,13 +453,149 @@ class PlanGateMiddleware(AgentMiddleware):
             lines = [
                 f"plan_id={plan.plan_id} 상태={plan.status}",
                 f"target_files={plan.target_files}",
+                f"memory_refs={plan.memory_refs}",
                 f"allow_subagent={plan.allow_subagent}",
             ]
             if plan.review_note:
                 lines.append(f"review_note={plan.review_note}")
             return "\n".join(lines)
 
-        return [create_plan, review_plan, revise_plan, get_plan_status]
+        @tool
+        def search_memory(query: str) -> str:
+            """Search project memory for `query` (Step 4, 3-2).
+
+            Searches `.deepagents/AGENTS.md`'s project rules (tagged
+            `[Rn]`) and `.deepagents/memories/lessons.md`'s improvement
+            candidates (tagged `[Ln]`). Call this *before* `create_plan` —
+            cite the ids it returns in `memory_refs`; a made-up id is
+            rejected there, not just an empty list (M1).
+
+            Args:
+                query: Search text, matched case-insensitively against each
+                    rule line and each candidate block.
+
+            Returns:
+                Matching `[Rn]`/`[Ln]` entries with their source file, or a
+                no-match notice.
+            """
+            hits = memory.search(query, self._project_root)
+            return memory.format_search_results(query, hits)
+
+        @tool
+        def propose_improvement(
+            target_path: str, reason: str, proposed_text: str
+        ) -> str:
+            """Propose a self-improvement candidate from repeated failures (3-3).
+
+            Only records a **candidate** in `.deepagents/memories/lessons.md`
+            — nothing is applied automatically (M3). A human reviews it and,
+            if they agree, hand-edits the real target file themselves.
+
+            Args:
+                target_path: Where the change would land if approved. Must
+                    be `.deepagents/AGENTS.md`, or under
+                    `.deepagents/memories/` or `.deepagents/skills/` — never
+                    the gate, logger, tests, or vendored source (TCB, M5).
+                reason: The repeated failure this addresses. Matched against
+                    past `gate_block` reasons and failed-tool-call errors in
+                    `runs/*/events.jsonl`; must have occurred at least 3
+                    times (M2) — one failure is not enough.
+                proposed_text: The concrete sentence to add. Include a fresh
+                    `[Rn]` id if this should become a citable rule once
+                    approved.
+
+            Returns:
+                The new candidate's id (e.g. `"L1"`), or a rejection message
+                naming why (disallowed target, placeholder text, or not
+                repeated enough yet).
+            """
+            thread_id = thread_id_from_config()
+            _safe_record(
+                self._ev,
+                IMPROVE_START,
+                thread_id,
+                name=target_path,
+                data={"reason": reason},
+            )
+            try:
+                candidate_id = memory.propose_improvement(
+                    target_path, reason, proposed_text, self._project_root
+                )
+            except memory.MemoryError as exc:
+                _safe_record(
+                    self._ev,
+                    IMPROVE_END,
+                    thread_id,
+                    name=target_path,
+                    data={"status": "error", "error": str(exc)},
+                )
+                return f"개선안 거부됨: {exc}"
+            _safe_record(
+                self._ev,
+                IMPROVE_END,
+                thread_id,
+                name=candidate_id,
+                data={"status": "ok", "target_path": target_path, "reason": reason},
+            )
+            return (
+                f"개선 후보 생성됨 (candidate_id={candidate_id}, 대상={target_path}).\n"
+                f'다음: verify_improvement(candidate_id="{candidate_id}")로 '
+                "검증하세요.\n사람이 승인해야 실제로 반영됩니다 (M3)."
+            )
+
+        @tool
+        def verify_improvement(candidate_id: str) -> str:
+            """Verify one improvement candidate with a fixed, model-free check (3-4).
+
+            Compares before/after within this single call, never against a
+            value measured in an earlier run (M4). Never applies the
+            candidate — only records the verification result and updates
+            its status in `lessons.md`.
+
+            Args:
+                candidate_id: A `propose_improvement` result, e.g. `"L1"`.
+
+            Returns:
+                The before/after numbers and verdict, or an error if
+                `candidate_id` does not exist.
+            """
+            try:
+                result = memory.verify_improvement(candidate_id, self._project_root)
+            except memory.MemoryError as exc:
+                return f"검증 실패: {exc}"
+            memory.update_candidate_status(
+                candidate_id,
+                self._project_root,
+                verified=result["improved"],
+                before=result["before"],
+                after=result["after"],
+            )
+            _safe_record(
+                self._ev,
+                IMPROVE_VERIFIED,
+                thread_id_from_config(),
+                name=candidate_id,
+                data=result,
+            )
+            verdict = (
+                "통과 — 사람이 승인하면 반영 가능합니다"
+                if result["improved"]
+                else "기각 — 개선이 확인되지 않아 반영하지 않습니다 (fail-closed, M4)"
+            )
+            return (
+                f"검증 결과 (candidate_id={candidate_id}): "
+                f"before={result['before']} after={result['after']} → {verdict}"
+            )
+
+        return [
+            create_plan,
+            review_plan,
+            revise_plan,
+            get_plan_status,
+            search_memory,
+            propose_improvement,
+            verify_improvement,
+        ]
 
     # --- D1/D6: the gate itself -------------------------------------------
 

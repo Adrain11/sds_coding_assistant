@@ -43,6 +43,11 @@ def _fake_reviewer(plan):
 
 @pytest.fixture
 def gate(tmp_path):
+    agents_md = tmp_path / ".deepagents" / "AGENTS.md"
+    agents_md.parent.mkdir(parents=True, exist_ok=True)
+    agents_md.write_text(
+        "# 프로젝트 규칙\n\n- **[R1]** 테스트용 규칙입니다.\n", encoding="utf-8"
+    )
     ev = EventWriter(runs_dir=tmp_path / "runs")
     mw = PlanGateMiddleware(ev, project_root=tmp_path, reviewer=_fake_reviewer)
     yield mw
@@ -66,6 +71,7 @@ def _approve_plan(
         target_files=target_files,
         steps=["첫 단계", "둘째 단계"],
         test_plan="pytest로 확인합니다 충분히 길게",
+        memory_refs=["R1"],
         allow_subagent=allow_subagent,
     )
     store.review(plan.plan_id, "note")
@@ -254,9 +260,17 @@ class TestAsyncParity:
 
 
 class TestPlanToolsExposed:
-    def test_tools_list_has_four_plan_tools(self, gate):
+    def test_tools_list_has_seven_tools(self, gate):
         names = {t.name for t in gate.tools}
-        assert names == {"create_plan", "review_plan", "revise_plan", "get_plan_status"}
+        assert names == {
+            "create_plan",
+            "review_plan",
+            "revise_plan",
+            "get_plan_status",
+            "search_memory",
+            "propose_improvement",
+            "verify_improvement",
+        }
 
     def test_u6_create_plan_tool_rejects_blank_field(self, gate):
         create_plan = next(t for t in gate.tools if t.name == "create_plan")
@@ -269,6 +283,7 @@ class TestPlanToolsExposed:
                 "target_files": ["a.py"],
                 "steps": ["첫 단계"],
                 "test_plan": "테스트 방법입니다 충분히 길게",
+                "memory_refs": ["R1"],
             }
         )
         assert "거부됨" in result
@@ -285,6 +300,7 @@ class TestPlanToolsExposed:
                 "target_files": ["a.py"],
                 "steps": ["첫 단계"],
                 "test_plan": "테스트 방법입니다 충분히 길게",
+                "memory_refs": ["R1"],
             }
         )
         plan_id = msg.split("plan_id=")[1].split(",")[0]
@@ -308,6 +324,7 @@ class TestPlanToolsExposed:
                 "target_files": ["a.py"],
                 "steps": ["첫 단계"],
                 "test_plan": "테스트 방법입니다 충분히 길게",
+                "memory_refs": ["R1"],
             }
         )
         plan_id = msg.split("plan_id=")[1].split(",")[0]

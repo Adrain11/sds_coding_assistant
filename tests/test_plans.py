@@ -19,6 +19,7 @@ _VALID = {
     "target_files": ["assistant/assistant/observability.py"],
     "steps": ["attempt 카운터 추가", "단위 테스트 작성"],
     "test_plan": "pytest tests/test_observability.py 통과",
+    "memory_refs": ["R1"],
 }
 
 
@@ -58,6 +59,12 @@ class TestCreate:
         store = PlanStore(tmp_path)
         with pytest.raises(PlanError):
             _create(store, steps=[])
+
+    def test_rejects_empty_memory_refs(self, tmp_path):
+        """MC3 — a plan with no cited memory is rejected (Step 4 M1)."""
+        store = PlanStore(tmp_path)
+        with pytest.raises(PlanError):
+            _create(store, memory_refs=[])
 
     def test_defaults_allow_subagent_false(self, tmp_path):
         store = PlanStore(tmp_path)

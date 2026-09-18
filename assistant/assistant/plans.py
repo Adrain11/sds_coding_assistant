@@ -106,6 +106,7 @@ class Plan:
     target_files: list[str]
     steps: list[str]
     test_plan: str
+    memory_refs: list[str]
     allow_subagent: bool = False
     status: str = DRAFT
     review_note: str | None = None
@@ -174,9 +175,17 @@ class PlanStore:
         target_files: list[str],
         steps: list[str],
         test_plan: str,
+        memory_refs: list[str],
         allow_subagent: bool = False,
     ) -> Plan:
-        """Validate and persist a new plan in `draft` (EC4/U6)."""
+        """Validate and persist a new plan in `draft` (EC4/U6).
+
+        `memory_refs` only gets a *shape* check here (non-empty list of
+        non-empty strings, MC3) — whether each entry names a real
+        `[Rn]`/`[Ln]` tag is `assistant.plan_gate`'s job (Step 4 M1), since
+        that check needs a project root to read files from and this module
+        stays filesystem-root-agnostic by design (see module docstring).
+        """
         values = {
             "title": title,
             "requirements": requirements,
@@ -188,6 +197,7 @@ class PlanStore:
             _validate_text(name, values[name])
         target_files = _validate_str_list("target_files", target_files)
         steps = _validate_str_list("steps", steps)
+        memory_refs = _validate_str_list("memory_refs", memory_refs)
 
         plan_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
         plan = Plan(
@@ -199,6 +209,7 @@ class PlanStore:
             target_files=target_files,
             steps=steps,
             test_plan=test_plan,
+            memory_refs=memory_refs,
             allow_subagent=bool(allow_subagent),
             status=DRAFT,
         )
@@ -287,7 +298,7 @@ class PlanStore:
                     continue
                 if key in _REQUIRED_TEXT_FIELDS:
                     value = _validate_text(key, value)
-                elif key in ("target_files", "steps"):
+                elif key in ("target_files", "steps", "memory_refs"):
                     value = _validate_str_list(key, value)
                 setattr(plan, key, value)
             plan.status = DRAFT

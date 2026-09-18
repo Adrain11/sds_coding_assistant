@@ -13,8 +13,8 @@
 
 | # | 이미 있는 것 | 이 단계에서 쓰는 곳 |
 |---|---|---|
-| **P1** | dcode `MemoryMiddleware`가 `~/.deepagents/<id>/AGENTS.md` + 프로젝트 `AGENTS.md`를 매 세션 로드하고, `memory_auto_save`가 켜져 있으면 스스로 기록한다 (`agent.py:3133-3155`) | **3-1이 거의 공짜다** |
-| **P2** | 이미 실측된 사실 — 세션1에서 "타입힌트 붙이고 기억해" → 세션2(새 스레드)에서 자동 적용 (`handoff.md` §4 R3) | 3-1의 증거가 이미 한 번 나왔다 |
+| **P1** | dcode `MemoryMiddleware`가 `~/.deepagents/<id>/AGENTS.md` + 프로젝트 `AGENTS.md`를 매 세션 로드하고, `memory_auto_save`가 켜져 있으면 스스로 기록한다 (`agent.py:3133-3155`) — 🔴 **09.18 정정: 로드 대상은 이 두 파일뿐, 디렉터리 스캔이 없다** (`project_utils.py:150-224` `find_project_agent_md`가 고정 후보 2개만 확인, `MemoryMiddleware.sources`도 고정 리스트). **"프로젝트 규칙" 메모리는 `.deepagents/AGENTS.md` 자체다** — 새 `.deepagents/memories/project_rules.md`를 만들어도 자동 로드되지 않는다 | **3-1이 거의 공짜다** (단, 규칙은 `.deepagents/AGENTS.md`에 있을 때만) |
+| **P2** | 이미 실측된 사실이라고 적혀 있던 것 — 세션1에서 "타입힌트 붙이고 기억해" → 세션2(새 스레드)에서 자동 적용 (`handoff.md` §4 R3) — 🔴 **09.18 정정: `handoff.md`는 이 저장소에 존재한 적이 없다** (`git log --all` 0건, `PLAN.md:126`은 이 문서를 "대체(전제가 바뀜)"로 표시). 이 저장소 안에서는 검증 불가 — **M-E1 TUI 실측으로 다시 확인해야 한다** | 3-1은 P1 정정 반영 후 TUI로 새로 확인 필요 (증거 없음 취급) |
 | **P3** | 이벤트 로거가 `gate_block` · `tool_end(status=error)` · `run_end`를 남긴다 | **3-3의 입력이 이미 쌓이고 있다** |
 | **P4** | 계획 게이트의 도구 4개와 상태 기계, `_TCB_PATH_PREFIXES` | 3-2를 **강제**하는 자리 · 3-3의 TCB 경계 |
 | **P5** | `events.py`에 `memory_hit` / `improve_*` 타입이 **이미 예약돼 있다** (단계 2 D7) | `report.py`를 안 고쳐도 된다 |
@@ -39,8 +39,10 @@
 ### 하는 것
 - `assistant/memory.py` — 메모리 검색·개선안 생성·전후 검증
 - `plan_gate.py` 수정 — `create_plan`에 `memory_refs` 필수 인자 (3-2의 강제 지점)
-- `.deepagents/memories/` — `project_rules.md`, `lessons.md`
-- `.deepagents/AGENTS.md` 갱신 — 메모리 절차 한 절
+- `.deepagents/AGENTS.md` — 🔴 **09.18 정정 (P1 참고)**: 프로젝트 규칙을 `[R1]`·`[R2]`… id를 붙여
+  이 파일에 직접 시드한다. 이 파일만 dcode가 매 세션 자동 로드하기 때문 — 새 디렉터리가 아니다
+- `.deepagents/memories/lessons.md` — `propose_improvement`가 만드는 개선 **후보** 전용 저장소.
+  자동 로드 대상이 아니어도 된다 (M3 — 사람 승인 전까지는 적용되지 않으므로)
 - `tests/test_memory.py`
 - `README.md` 항목 3 테스트 케이스
 
@@ -71,7 +73,7 @@
 
 | # | 파일 | 내용 | 예상 |
 |---|---|---|---|
-| 1 | `.deepagents/memories/project_rules.md` | 프로젝트 규칙 3~5줄로 시드 (예: "PEP8 준수", "타입힌트 필수") | 10분 |
+| 1 | `.deepagents/AGENTS.md` | 🔴 정정 — 프로젝트 규칙 3~5개를 `[R1]`..`[Rn]` id를 붙여 이 파일에 새 절로 시드 (예: "**[R1]** PEP8 준수", "**[R2]** 타입힌트 필수") | 10분 |
 | 2 | `assistant/memory.py` | ① `search_memory(query)` ② `propose_improvement()` ③ `verify_improvement(id)` | 60분 |
 | 3 | `assistant/plan_gate.py` | `create_plan`에 `memory_refs: list[str]` **필수 인자** 추가 + 검증 + `memory_hit` 이벤트 | 30분 |
 | 4 | `tests/test_memory.py` | MC3·MC5·MC6·MC7 대응 단위 테스트 | 45분 |
@@ -99,7 +101,9 @@ create_plan(
 ```
 
 - 비어 있으면 거부 (단계 3 D2의 "내용 검사"와 같은 방식)
-- 각 항목이 `.deepagents/memories/` 안에 **실제로 존재하는지** 검증한다 — 지어낸 인용을 막는다
+- 각 항목이 🔴 **09.18 정정** — `.deepagents/AGENTS.md`(`[R1]`.. 프로젝트 규칙) 또는
+  `.deepagents/memories/lessons.md`(`[L1]`.. 개선 후보)에 **실제로 존재하는 id인지** 검증한다
+  (`[R3]`/`[L2]`처럼 대괄호 태그로 찾는다) — 지어낸 인용을 막는다
 - 통과하면 `memory_hit` 이벤트를 쓴다 → `report show`에 보이고 **4-2("Memory 활용 기록")도 같이 채운다**
 
 > 📄 8일차 6p 그대로다. "메모리를 참고하세요"는 부탁, 필수 인자는 강제.
@@ -179,7 +183,7 @@ assistant/**   tests/**   libs/**   .deepagents/plans/**
 | | 절차 | EC |
 |---|---|---|
 | **M-E1** | 세션1: "앞으로 함수에 타입힌트 꼭 붙여줘, 기억해" → **새 세션**: "인사 함수 만들어줘" | MC1 (3-1) |
-| **M-E2** | `cat .deepagents/memories/*.md` | MC2 |
+| **M-E2** | 🔴 정정 — `cat .deepagents/AGENTS.md .deepagents/memories/lessons.md` | MC2 |
 | **M-E3** | "계획 세워줘" → 메모리 인용 없이 만들게 유도 | MC3 (3-2) |
 | **M-E4** | 정상 계획 후 `report show <run_id>` | MC4 — `memory_hit`이 보인다 |
 | **M-E5** | 일부러 3번 차단당한 뒤 "개선안 만들어줘" | MC5 (3-3) |

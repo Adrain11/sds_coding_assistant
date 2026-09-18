@@ -5,22 +5,26 @@
 
 ## 계획 게이트 (Step 3)
 
-- **`write_file`·`edit_file`·`delete`·`task`는 승인된 계획이 없으면 코드로 차단된다.**
-  `execute`(셸)는 승인 후에도 **항상** 차단된다. 이건 훅(`.deepagents/hooks.json`)이 아니라
-  `libs/code/deepagents_code/agent.py`에 배선된 `PlanGateMiddleware`(소스: `assistant/assistant/plan_gate.py`)가
-  한다 — 이전에 이 파일이 말하던 `hooks/pep8_gate.py` 기반 강제는 이 저장소에 없다
-  (step0 실측 결과 훅은 `write_file`만 막고 `execute`로 쉽게 우회됐다).
-- 절차는 `.deepagents/skills/plan-first/SKILL.md`를 따른다: `create_plan` → `review_plan` →
-  (필요하면 `revise_plan`) → 사람이 `python -m assistant.plan_gate approve <plan_id>`로 승인.
-  승인 도구는 에이전트에게 없다 — 어떤 이름으로도 없다.
-- 승인된 계획의 `target_files` **밖**을 고치려 하면 다시 차단되고 계획이 `draft`로 되돌아간다.
-  더 넓은 범위가 필요해지면 차단당하기 전에 `revise_plan`으로 먼저 넓혀라.
-- 게이트 자신(`assistant/assistant/plan_gate.py`·`plans.py`), 로거(`events.py`·`observability.py`),
-  테스트(`tests/**`), 원본 코드(`libs/**`)는 계획에 적혀 있어도 항상 차단된다.
+- **[R1]** `write_file`·`edit_file`·`delete`·`task`는 승인된 계획이 없으면 코드로 차단된다.
+  이건 훅(`.deepagents/hooks.json`)이 아니라 `libs/code/deepagents_code/agent.py`에 배선된
+  `PlanGateMiddleware`(소스: `assistant/assistant/plan_gate.py`)가 한다 — 이전에 이 파일이
+  말하던 `hooks/pep8_gate.py` 기반 강제는 이 저장소에 없다 (step0 실측 결과 훅은
+  `write_file`만 막고 `execute`로 쉽게 우회됐다).
+- **[R2]** `execute`(셸)는 승인 후에도 **항상** 차단된다 — 셸이 열리면 사람만 할 수 있는
+  승인을 에이전트가 대신할 수 있게 되기 때문이다.
+- 절차는 `.deepagents/skills/plan-first/SKILL.md`를 따른다: `create_plan`(`memory_refs` 필수,
+  아래 "메모리" 절 참고) → `review_plan` → (필요하면 `revise_plan`) → 사람이
+  `python -m assistant.plan_gate approve <plan_id>`로 승인. 승인 도구는 에이전트에게 없다 —
+  어떤 이름으로도 없다.
+- **[R3]** 승인된 계획의 `target_files` **밖**을 고치려 하면 다시 차단되고 계획이 `draft`로
+  되돌아간다. 더 넓은 범위가 필요해지면 차단당하기 전에 `revise_plan`으로 먼저 넓혀라.
+- **[R4]** 게이트 자신(`assistant/assistant/plan_gate.py`·`plans.py`·`memory.py`),
+  로거(`events.py`·`observability.py`), 테스트(`tests/**`), 원본 코드(`libs/**`)는 계획에
+  적혀 있어도 항상 차단된다 (TCB, 자기개선도 이 목록은 못 건드린다 — 아래 "메모리" 절 M5).
 
 ## 코드 스타일
 
-- 모든 Python 코드는 PEP8을 따른다. 단계 5에서 ruff 기반 검사가 추가되기 전까지는
+- **[R5]** 모든 Python 코드는 PEP8을 따른다. 단계 5에서 ruff 기반 검사가 추가되기 전까지는
   스스로 PEP8을 지킬 것 — 지금은 강제하는 코드가 없다.
 
 ## 작업 전 리뷰 워크플로우
