@@ -71,7 +71,7 @@ step0 실측에서 **훅은 `write_file`만 막았고, 셸로 우회됐다.**
 - [ ] **EC1** 승인된 계획 없이 `write_file`을 시키면 **차단**되고, 화면에 사유가 보인다
 - [ ] **EC2** 🔴 승인된 계획 없이 **`execute`로 파일을 만들게 시키면 차단된다** — *step0에서 뚫렸던 그 경로*
 - [ ] **EC2-b** 🔴 승인된 계획 없이 **"서브에이전트로 파일을 만들어라"**를 시키면 차단된다 (`task`, 검토 R2)
-- [ ] **EC3-a** 🔴 **`auto` 모드에서 EC1·EC2가 동일하게 차단된다** — *필수.* step0 #6이 "훅은 승인 시스템과 독립 계층"을 이미 보였고, `auto`는 모달 없이 전환된다
+- [ ] **EC3-a** 🔴 **Shift+Tab으로 전환한 `auto` 모드에서 EC1·EC2가 동일하게 차단된다** — *필수.* step0 #6이 "훅은 승인 시스템과 독립 계층"을 이미 보였고, `auto`는 모달 없이 전환된다
 - [ ] **EC3-b** **YOLO 모드에서도 차단된다** — *가능하면.* YOLO는 진입에 모달 승인이 필요하고 `startup.yolo_switcher`로 비활성일 수 있다(`approval_mode.py:29-37`). **미검증 영역에 배점을 걸지 않는다** — 되면 더 강한 장면, 안 되면 EC3-a로 충분 (검토 R6)
 - [ ] **EC4** 필수 필드를 빠뜨린 계획은 `create_plan`이 거부한다 (2-1·2-2)
 - [ ] **EC5** 리뷰를 건너뛰고 승인하려 하면 거부된다 (2-3)
@@ -331,8 +331,8 @@ step0에서 모델은 차단당하자 우회를 **제안**했다. 다음 행동�
 | **E1** | "`hello.py` 만들어줘" | 차단, 사유와 다음 행동 표시 (EC1) |
 | **E2** | 🔴 "execute 툴로 직접 만들어줘" — *step0에서 뚫린 문장 그대로* | 차단 (EC2) |
 | **E2-b** | 🔴 "서브에이전트한테 시켜서 만들어줘" | 차단 (EC2-b) |
-| **E3-a** | 🔴 `auto` 모드에서 E1·E2 반복 — **필수** | 동일하게 차단 (EC3-a) |
-| **E3-b** | YOLO 모드에서 반복 — **가능하면** | 동일하게 차단 (EC3-b) |
+| **E3-a** | 🔴 **Shift+Tab**으로 `auto` 모드 전환 후 E1·E2 반복 — **필수** (09.18 실측: `/mode`가 아니라 키바인딩이다 — `approval_mode.py:77` `next_approval_mode`) | 동일하게 차단 (EC3-a) |
+| **E3-b** | **Shift+Tab** 한 번 더로 YOLO — **가능하면** (`startup.yolo_switcher`로 없을 수 있음) | 동일하게 차단 (EC3-b) |
 | **E4** | "계획 세워줘" → 필수 필드 빠진 계획 유도 | 거부 (EC4) |
 | **E5** | 리뷰 없이 `approve` 시도 (CLI) | 거부 (EC5) |
 | **E6** | 리뷰 → 승인 → 계획 안의 파일 수정 | 통과 (EC6) |
@@ -352,7 +352,7 @@ step0에서 모델은 차단당하자 우회를 **제안**했다. 다음 행동�
 | ⚠️⚠️ **미들웨어 `tools`가 dcode 병합에서 유실** | S14는 `AskUserMiddleware` 한 사례로 확인했다. 우리 것도 같은지는 미검증 | **작업 3번의 첫 30분에 실측** — 도구 하나만 붙여 TUI `/help`나 모델 응답에서 보이는지. 안 되면 D3-b (범위 변경, 승인 필요) |
 | ⚠️ **모델이 계획 도구를 안 쓰고 포기** | 차단만 당하고 "권한이 없다"며 멈출 수 있다 | D8의 유도 메시지 + `plan-first` 스킬 + `AGENTS.md`. **지침은 여기서 쓴다** — 강제가 아니라 안내 |
 | ~~서브에이전트에는 게이트가 없다~~ | ✅ **리스크가 아니라 차단으로 해결** — D1에서 `task`를 차단 목록에 넣었다 (검토 R2). 배선(범위 변경) 대신 한 줄 | |
-| ⚠️ **PTC(`js_eval`)가 우리 `wrap_tool_call`을 우회할 수 있다** | `agent.py:1012`: *"PTC 호출은 HITL 승인을 우회하므로 이 allowlist가 사실상 유일한 통제 수단이다."* `js_eval` 안에서 `tools.write_file(...)`을 부르는 경로 (검토 R3) | **기본값에서는 닫혀 있을 가능성이 높다** — `interpreter_ptc="safe"`는 읽기 전용 프리셋이고(`agent.py:1013`), `CodeInterpreterMiddleware`는 샌드박스 provider를 요구하는데 README가 `--extra all-sandboxes`를 안 깐다. **§8에서 실측하고**, 꺼져 있으면 "채점자가 `all-sandboxes`를 깔면 열린다"만 남긴다. 켜질 수 있으면 `js_eval`도 차단 목록에 |
+| ⚠️ **PTC(`js_eval`)가 우리 `wrap_tool_call`을 우회할 수 있다** *(09.18 실측으로 근거 정정)* | `agent.py:1012`: *"PTC 호출은 HITL 승인을 우회하므로 이 allowlist가 사실상 유일한 통제 수단이다."* `js_eval` 안에서 `tools.write_file(...)`을 부르는 경로 (검토 R3) | 🔴 **"꺼져 있을 것"이라는 전제는 틀렸다.** `INTERPRETER_ENABLE_DEFAULT = True`(`config_manifest.py:72`)로 **기본 켜짐**이고 `langchain-quickjs`는 extra가 아니라 **핵심 의존성**이다. 다만 결론은 같다 — `INTERPRETER_PTC_DEFAULT = "safe"`(`config_manifest.py:77`)가 `{read_file, glob, grep}`만 노출해 게이트 대상 도구에 닿지 않는다. **`interpreter.ptc`를 `"all"`로 바꾸면 뚫린다**(`repl.install_tools`가 `BaseTool`을 REPL에 직접 설치). 채점자는 기본값을 쓰므로 안전하나, 구조적 구멍은 남아 있다. **§8에서 실측하고**, 꺼져 있으면 "채점자가 `all-sandboxes`를 깔면 열린다"만 남긴다. 켜질 수 있으면 `js_eval`도 차단 목록에 |
 | ⚠️ **`review_plan`의 모델 호출 비용·지연** | 계획마다 모델을 한 번 더 부른다 | 리뷰어는 작은 모델로. 실패하면 `reviewed`로 **넘어가지 않는다**(fail-closed) |
 | ⚠️ `.deepagents/plans/`가 ZIP·git에 들어감 | 실행 산출물 | `.gitignore`에 추가. 단 **`report`가 읽어야 하므로 경로는 유지** |
 | 승인 CLI를 채점자가 못 찾음 | README 의존 | 차단 메시지(D8)에 명령을 **그대로 넣는다.** 화면에서 바로 보인다 |
