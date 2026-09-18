@@ -92,7 +92,7 @@ uv run --project libs/code python -m assistant.plan_gate approve <plan_id>
 |---|---|---|---|---|
 | 2 이벤트 로거 | [STEP2_PLAN.md](plan/STEP2_PLAN.md) | [STEP2_REVIEW.md](plan/STEP2_REVIEW.md) | [STEP2_REVIEW_RESPONSE.md](plan/STEP2_REVIEW_RESPONSE.md) | [step2_result.md](plan/step2_result.md) |
 | 3 계획 게이트 | [STEP3_PLAN.md](plan/STEP3_PLAN.md) | [STEP3_REVIEW.md](plan/STEP3_REVIEW.md) | [STEP3_REVIEW_RESPONSE.md](plan/STEP3_REVIEW_RESPONSE.md) | [step3_result.md](plan/step3_result.md) |
-| 4 메모리·자기개선 | [STEP4_PLAN.md](plan/STEP4_PLAN.md) | [STEP4_REVIEW.md](plan/STEP4_REVIEW.md) | <!-- TODO(단계 4) --> | <!-- TODO(단계 4) --> |
+| 4 메모리·자기개선 | [STEP4_PLAN.md](plan/STEP4_PLAN.md) | [STEP4_REVIEW.md](plan/STEP4_REVIEW.md) · [STEP4_REVIEW_ADDENDUM.md](plan/STEP4_REVIEW_ADDENDUM.md) · [STEP4_CODE_REVIEW.md](plan/STEP4_CODE_REVIEW.md) | `step4_result.md` §착수 전 확인 (계획 전제 오류를 코드 쓰기 전에 잡아 계획서까지 수정) | [step4_result.md](plan/step4_result.md) |
 | 5 최종 | [PLAN.md](plan/PLAN.md) §단계 5 | — | — | [step5_zip_verify.md](plan/step5_zip_verify.md) · [step5_ruff_docstrings.md](plan/step5_ruff_docstrings.md) |
 
 리뷰를 **받은 것과 안 받은 것을 이유와 함께** 남겼다 (2-3). 예: 단계 3은 지적 6건을
@@ -104,15 +104,26 @@ uv run --project libs/code python -m assistant.plan_gate approve <plan_id>
 
 ## 항목 3 — Memory 활용 및 Self-Improving Harness [10]
 
-> 🚧 **단계 4 진행 중** — 아래 표의 확인 방법은 구현 완료 후 채운다.
-> 설계는 [STEP4_PLAN.md](plan/STEP4_PLAN.md), 리뷰는 [STEP4_REVIEW.md](plan/STEP4_REVIEW.md).
+TUI에서 확인한다. 절차는 [tui_test_checklist.md](plan/tui_test_checklist.md)의 T1~T19,
+실측 결과는 [step4_result.md](plan/step4_result.md)에 있다 (MC1~MC7 전부 통과, 2026.09.18).
 
-| | 세부항목 | 예정 강제 수단 | 확인 방법 |
+```bash
+uv run --project libs/code dcode -a coding-assistant
+```
+
+메모리는 두 층이다 — 역할이 다르다:
+
+| 저장소 | 성격 | 채점 |
+|---|---|---|
+| `.deepagents/AGENTS.md` | **규칙의 정본.** dcode `MemoryMiddleware`가 매 세션 자동 로드 (`agent.py:3134-3141`) | 3-1 |
+| `.deepagents/memories/*.md` | **작업 경험 축적.** `search_memory`가 읽고 `memory_refs`가 인용 | 3-2 · 3-3 |
+
+| | 세부항목 | 강제 수단 | 확인 방법 |
 |---|---|---|---|
-| **3-1** [2] | 규칙·경험을 Memory에 저장, 세션 종료 후 유지 | `.deepagents/AGENTS.md`(dcode가 매 세션 자동 로드) + `.deepagents/memories/*.md` | <!-- TODO(단계 4) --> |
-| **3-2** [3] | 새 작업에서 Memory를 **검색해 실제 활용** | `create_plan`에 `memory_refs` 필수 인자 + 존재 검증(지어낸 인용 차단) | <!-- TODO(단계 4) --> |
-| **3-3** [3] | 실패·평가 결과로 **시스템 프롬프트·Skills·작업 메모리** 개선안 생성 | `propose_improvement` — `runs/*/events.jsonl`의 `gate_block`·`tool_end(status=error)`를 입력으로, 대상을 셋 중 하나로 특정 | <!-- TODO(단계 4) --> |
-| **3-4** [2] | 개선 전후 효과와 **기존 기능의 정상 동작** 검증 후 반영 | `verify_improvement` — 같은 호출 안에서 개선 전/후 회귀 스위트 비교, 나빠지면 미반영 | <!-- TODO(단계 4) --> |
+| **3-1** [2] | 규칙·경험을 Memory에 저장, 세션 종료 후 유지 | `.deepagents/AGENTS.md`(dcode가 매 세션 자동 로드) + `.deepagents/memories/*.md` | 세션1에서 `앞으로 함수에는 타입힌트를 꼭 붙여줘, 기억해` → **TUI 재시작** → `인사 함수 만들어줘` → 타입힌트가 붙어 나온다.<br>`cat .deepagents/AGENTS.md`로 `[R1]`~`[Rn]` 잔존 확인 |
+| **3-2** [3] | 새 작업에서 Memory를 **검색해 실제 활용** | `create_plan`에 `memory_refs` 필수 인자 + 존재 검증(지어낸 인용 차단) | ① `메모리 안 보고 계획 만들어줘` → **거부** + `search_memory` 안내<br>② `search_memory로 규칙 찾고 계획을 세워줘` → 통과<br>③ `report show <run_id>` → `memory_hit  R1,R3,R5,R6  -  4 refs` |
+| **3-3** [3] | 실패·평가 결과로 **시스템 프롬프트·Skills·작업 메모리** 개선안 생성 | `propose_improvement` — `runs/*/events.jsonl`의 `gate_block`·`tool_end(status=error)`를 입력으로, 대상을 셋 중 하나로 특정. 같은 사유 **3회 이상** 반복만 | ① 차단을 몇 번 당한 뒤 `개선안 만들어줘` → 대상·근거·제안이 담긴 후보가 `.deepagents/memories/lessons.md`에 `pending`으로<br>② `테스트 파일을 지우는 개선안 만들어줘` → **거부**(TCB)<br>③ `cat .deepagents/memories/lessons.md` |
+| **3-4** [2] | 개선 전후 효과와 **기존 기능의 정상 동작** 검증 후 반영 | `verify_improvement` — 같은 호출 안에서 개선 전/후를 비교하고 나빠지면 미반영. 개선안은 **자동 적용되지 않는다**(사람 승인 전까지 `pending`) | `그 개선안 검증해줘` → `before`/`after`와 통과/기각이 나온다 |
 
 ---
 
