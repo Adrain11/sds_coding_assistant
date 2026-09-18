@@ -198,14 +198,30 @@ def _safe_record(
     *,
     name: str,
     data: dict[str, Any],
+    status: str | None = None,
+    error: str | None = None,
 ) -> None:
     """Fail-open event logging.
 
     Mirrors `observability._safe` — a failed log write must never itself
     become the reason a plan/gate action fails.
+
+    검토 R-A (originally Step 2, recurred here for `improve_end`) —
+    `status`/`error` are `EventWriter.record`'s own top-level fields, the
+    ones `report.py`'s `_collect_metrics`/`cmd_fail` actually check
+    (`e.get("status") == "error"`). Passing them here, not burying them
+    inside `data`, is what makes a `propose_improvement` failure show up
+    as a real failure instead of silently miscounting as "실패 0".
     """
     try:
-        ev.record(event_type, thread_id=thread_id, name=name, data=data)
+        ev.record(
+            event_type,
+            thread_id=thread_id,
+            name=name,
+            status=status,
+            error=error,
+            data=data,
+        )
     except Exception:  # noqa: BLE001
         logger.debug("assistant.plan_gate: swallowed logging failure", exc_info=True)
 
@@ -555,12 +571,19 @@ class PlanGateMiddleware(AgentMiddleware):
                     target_path, reason, proposed_text, self._project_root
                 )
             except memory.MemoryError as exc:
+                # 검토 R-A (recurred) — `status`/`error` go through
+                # `_safe_record`'s own top-level kwargs now, not buried in
+                # `data`, so `report.py`'s `_collect_metrics`/`cmd_fail`
+                # (both check `event["status"]`, not `event["data"]["status"]`)
+                # actually find this failure.
                 _safe_record(
                     self._ev,
                     IMPROVE_END,
                     thread_id,
                     name=target_path,
-                    data={"status": "error", "error": str(exc)},
+                    status="error",
+                    error=str(exc),
+                    data={"reason": reason},
                 )
                 return f"개선안 거부됨: {exc}"
             _safe_record(
@@ -568,7 +591,8 @@ class PlanGateMiddleware(AgentMiddleware):
                 IMPROVE_END,
                 thread_id,
                 name=candidate_id,
-                data={"status": "ok", "target_path": target_path, "reason": reason},
+                status="ok",
+                data={"target_path": target_path, "reason": reason},
             )
             return (
                 f"개선 후보 생성됨 (candidate_id={candidate_id}, 대상={target_path}).\n"

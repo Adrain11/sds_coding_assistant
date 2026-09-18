@@ -172,10 +172,13 @@ def _build_rows(events: list[dict[str, Any]]) -> list[_Row]:
                 )
             )
         elif event_type == IMPROVE_END:
+            # 검토 R-A (recurred, "improve_end") — `status`/`error` are this
+            # event's own top-level fields (`EventWriter.record`'s kwargs),
+            # same as `tool_end`/`model_error` — not nested under `data`.
             data = event.get("data") or {}
-            is_error = data.get("status") == "error"
+            is_error = event.get("status") == "error"
             target = data.get("target_path", "?")
-            detail = data.get("error") if is_error else f"target={target}"
+            detail = event.get("error") if is_error else f"target={target}"
             rows.append(
                 _Row(
                     f"improve_end  {event.get('name', '?')}",

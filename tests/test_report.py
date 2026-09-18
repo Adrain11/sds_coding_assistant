@@ -303,6 +303,66 @@ def test_cmd_fail_catches_a_model_error_with_no_tool_failure(
     assert "RateLimitError: 429" in out
 
 
+def test_cmd_fail_catches_an_improve_end_failure(tmp_path: Path, capsys) -> None:
+    """`improve_end`'s failure must be a real top-level `status`, not nested.
+
+    검토 (2026-09-18) — R-A's pattern recurred for `propose_improvement`:
+    `plan_gate.py` used to bury `status`/`error` inside `improve_end`'s
+    `data`, which `_collect_metrics`/`cmd_fail` never look at (both check
+    `event["status"]`). A TCB-rejected `propose_improvement` call showed an
+    ERROR row in `show` (`_build_rows` reads `data` directly there) but
+    "실패 0" in the header/`stats`, and `report fail` couldn't find it at
+    all — exactly R-A's mismatch, just for a different event type.
+    """
+    run_id = "20260101-000000-improverun1"
+    events = [
+        {"ts": "...", "run_id": run_id, "seq": 1, "type": "run_start", "data": {}},
+        {
+            "ts": "...",
+            "run_id": run_id,
+            "seq": 2,
+            "type": "improve_start",
+            "name": "tests/test_x.py",
+            "data": {"reason": "테스트를 지우려는 사유"},
+        },
+        {
+            "ts": "...",
+            "run_id": run_id,
+            "seq": 3,
+            "type": "improve_end",
+            "name": "tests/test_x.py",
+            "status": "error",
+            "error": "TCB라 자기개선 대상이 될 수 없습니다.",
+            "data": {"reason": "테스트를 지우려는 사유"},
+        },
+        {
+            "ts": "...",
+            "run_id": run_id,
+            "seq": 4,
+            "type": "run_end",
+            "status": "ok",
+            "dur_ms": 20.0,
+            "data": {"event_count": 3, "error_count": 1},
+        },
+    ]
+    _write_fixture(tmp_path, run_id=run_id, events=events)
+
+    metrics = _collect_metrics(events)
+    assert metrics["errors"] == 1
+
+    exit_code = cmd_fail(run_id, tmp_path)
+    fail_out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "실패한 이벤트 없음" not in fail_out
+    assert "seq=3 improve_end" in fail_out
+    assert "TCB라 자기개선" in fail_out
+
+    cmd_show(run_id, tmp_path)
+    show_out = capsys.readouterr().out
+    assert "실패 1" in show_out
+    assert "ERROR" in show_out
+
+
 # --- stats: thin wrapper around the same metrics as show's footer (D7) ---
 
 

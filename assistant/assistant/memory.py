@@ -424,17 +424,32 @@ def verify_improvement(candidate_id: str, project_root: Path) -> dict[str, Any]:
         project_root: Repository root.
 
     Returns:
-        `{"candidate_id", "target_path", "before", "after", "improved"}`.
-        For an `AGENTS.md`/`memories` target, `before`/`after` are the count
-        of known `[Rn]`/`[Ln]` ids without/with the candidate's own newly
-        cited id(s); for a `skills` target they are `0`/`1` unless the
-        proposed text is already present verbatim (then `1`/`1`,
-        `improved=False`). `improved=False` means M4's "나빠지면 반영하지
-        않는다" — this function only measures; it never writes the
-        candidate's proposal anywhere.
+        `{"candidate_id", "target_path", "before", "after", "improved"}`,
+        with `improved = after >= before` (never computed separately from
+        the numbers — see 검토 A1 below). For a `skills` target, `before`/
+        `after` are `0`/`1` unless the proposed text is already present
+        verbatim (then `1`/`1`, `improved=False` — a no-op duplicate).
 
     Raises:
         MemoryError: `candidate_id` does not exist.
+
+    검토 A1 (2026-09-18) — `before`/`after` used to be
+    `len(before_ids)`/`len(before_ids | new_ids)`, a set *union* that can
+    only grow or stay the same: `after >= before` was a mathematical
+    identity, not a measurement, so M4's "나빠지면 반영하지 않는다" and V6
+    could never actually fire. Fixed by simulating this candidate's own
+    *promotion* instead of adding to an ever-growing union — M3's "사람이
+    검토해서 규칙 절로 옮기기" ("옮기기" = *move*): the candidate's own
+    `[Ln]` is consumed (removed from the counted set), traded for whatever
+    fresh `[Rn]` tag(s) `proposed_text` names. A well-formed proposal nets
+    to the same size (loses `[Ln]`, gains `[Rn]`) — genuinely `before ==
+    after`, `improved=True`. A content-free proposal (no fresh tag) nets to
+    `before - 1`: `[Ln]` is consumed and nothing replaces it — a real,
+    reachable regression, and now `after < before` is an actual measured
+    outcome, not an identity. This also *is* the "게이트 판정이 같은 결과인가"
+    check for a fixed case (M4's optional 3rd check): every ref `memory_refs`
+    could validate before promotion still validates after, by construction
+    of `after_ids`, so a separate check would be redundant here.
     """
     candidate = _parse_candidate(candidate_id, project_root)
     target_path = candidate["target_path"]
@@ -447,18 +462,14 @@ def verify_improvement(candidate_id: str, project_root: Path) -> dict[str, Any]:
         )
         already_present = proposed_text in current_text
         before, after = (1, 1) if already_present else (0, 1)
-        improved = not already_present
+        improved = after >= before and not already_present
     else:
         before_ids = known_ref_ids(project_root)
-        # The candidate's own `[Ln]` id already counts as "known" the moment
-        # `propose_improvement` created it — excluding it here keeps this
-        # scenario about whether the *proposed text* names something new
-        # (M4), not about the bookkeeping id that always pre-exists itself.
-        cited_ids = set(_RULE_TAG_RE.findall(proposed_text)) - {candidate_id}
-        new_ids = cited_ids - before_ids
+        new_tags = set(_RULE_TAG_RE.findall(proposed_text)) - before_ids
+        after_ids = (before_ids - {candidate_id}) | new_tags
         before = len(before_ids)
-        after = len(before_ids | new_ids)
-        improved = bool(new_ids)
+        after = len(after_ids)
+        improved = after >= before
 
     return {
         "candidate_id": candidate_id,

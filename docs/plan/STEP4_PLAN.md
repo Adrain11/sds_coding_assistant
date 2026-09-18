@@ -64,7 +64,9 @@
 - [ ] **MC3** 🔴 `memory_refs` 없이 `create_plan`을 부르면 **거부**된다 (3-2의 강제)
 - [ ] **MC4** 계획에 인용된 메모리가 `memory_hit` 이벤트로 로그에 남고 `report show`에 보인다 (3-2, 4-2)
 - [ ] **MC5** 실패/차단이 쌓인 뒤 `propose_improvement`를 부르면 **무엇을 어떻게 바꿀지**가 담긴 개선안이 `lessons.md`에 후보로 기록된다 (3-3)
-- [ ] **MC6** 🔴 `verify_improvement`가 **같은 실행 안에서** 개선 전/후를 비교한 결과를 보여준다 (3-4)
+- [ ] **MC6** 🔴 정정(검토 A1) — `verify_improvement`가 **같은 실행 안에서** 후보 승격을
+      회귀 검사로 시뮬레이션해 before/after 수치를 보여주고, **기존 규칙이 하나라도
+      사라지면(`after < before`) 반영하지 않는다**(§5 M4) (3-4)
 - [ ] **MC7** 개선안이 **TCB 경로를 대상으로 하면 거부**된다 — 테스트·게이트·로거를 못 고친다 (3-3의 안전장치)
 
 ---
@@ -144,14 +146,33 @@ create_plan(
 
 1. 개선안을 **적용하지 않은** 상태로 고정 시나리오를 돌린다 → `before`
 2. 개선안을 **적용한** 상태로 같은 시나리오를 돌린다 → `after`
-3. 둘을 비교해 `improve_verified` 이벤트에 **before/after 수치를 함께** 기록
+3. 둘을 비교해 `improve_end` 이벤트에 **before/after 수치를 함께** 기록
 4. **나빠졌으면 반영하지 않는다** (fail-closed — 게이트와 같은 원칙)
 
-고정 시나리오는 **모델을 부르지 않는 것**으로 한다 — 예: "이 계획이 게이트를 통과하는가"를
-`plan_gate`의 판정 함수로 직접 돌린다. 비결정적이지 않고, 빠르고, 채점자 키를 안 쓴다.
+🔴 **정정 (검토 A1, 2026-09-18)** — "고정 시나리오는 `plan_gate`의 판정 함수로 직접
+돌린다"였던 원안은 **수학적으로 4번을 만족시킬 수 없었다.** before/after를
+`len(before_ids)`/`len(before_ids | new_ids)`(합집합)로 계산했는데, 합집합은 원소가
+줄어들 수 없다 — `after >= before`가 항상 성립하는 **항등식**이었고, V6("나빠지면
+반영 안 함")이 발동할 입력이 존재하지 않았다.
 
-> 시간이 없으면 여기가 가장 먼저 줄어드는 곳이다. 최소한 **before/after 두 숫자가
-> 로그에 남는 것**까지는 한다 — 그게 3-4의 최소 증거다.
+**고친 시나리오 — 이 후보의 "승격(promotion)"을 회귀 검사로 시뮬레이션한다.**
+M3의 "사람이 검토해서 규칙 절로 옮기기"("옮기기" = *이동* — 후보 자신의 `[Ln]`이
+`lessons.md`에서 사라지고, 그 대신 제안 문장이 실제 대상에 더해진다)를 모델 없이,
+파일도 안 건드리고 집합 연산만으로 흉내낸다:
+
+```
+before_ids = known_ref_ids()                          # 이 후보의 [Ln] 포함
+new_tags   = {제안 문장이 담은 새 [Rn] id들} - before_ids
+after_ids  = (before_ids - {이 후보의 id}) | new_tags   # 승격: 소비하고 교체
+improved   = after >= before                            # 항등식이 아니라 실제 비교
+```
+
+정상적인 제안(새 `[Rn]`을 담음)은 `[Ln]`을 잃고 `[Rn]`을 얻어 **크기가 그대로** —
+`improved=True`. 내용 없는 제안(새 id가 없음)은 `[Ln]`만 소비되고 아무것도 안 들어와
+**실제로 줄어든다**(`after = before - 1`) — 이게 V6이 실제로 발동하는 지점이다.
+`memory_refs`가 검증하는 것과 같은 존재-검사를 재사용하므로, "게이트 판정 고정 케이스가
+같은 결과인가"(3번째 선택 검사)도 이 구조 안에 이미 포함된다 — 따로 만들 필요가 없다.
+상세 구현: `assistant/memory.py::verify_improvement`, 근거는 `step4_result.md`.
 
 ### M5. TCB — 자기개선이 못 건드리는 것 (단계 3 D7 재사용)
 
@@ -226,7 +247,7 @@ grep -n "memory_hit\|improve" assistant/assistant/events.py
 | 3-1 [2] | `.deepagents/memories/` 파일 + 새 세션에서 규칙 적용 | MC1·MC2 |
 | 3-2 [3] | `create_plan`의 `memory_refs` 필수 인자 + 존재 검증 + `memory_hit` 이벤트 | MC3·MC4 / V1·V2 |
 | 3-3 [3] | `propose_improvement` — **시스템 프롬프트·Skills·메모리** 중 대상을 찍은 개선안 | MC5 / V3 |
-| 3-4 [2] | `verify_improvement` — **같은 런 안 OFF/ON** before/after, 나빠지면 미반영 | MC6 / V5·V6 |
+| 3-4 [2] | `verify_improvement` — **같은 런 안** 후보 승격을 회귀 검사로 시뮬레이션, `after < before`면 미반영(검토 A1로 정정 — 이전엔 합집합이라 수학적으로 미반영이 발동 불가했다) | MC6 / V5·V6 |
 | 4-2 (보강) | `memory_hit` · `improve_*` 이벤트 | MC4 |
 
 ---

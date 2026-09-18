@@ -194,11 +194,22 @@ class TestVerifyImprovement:
             tmp_path,
         )
         result = memory.verify_improvement(candidate_id, tmp_path)
+        # 검토 A1 — promotion simulation: the candidate's own [L1] is
+        # consumed, traded for the freshly cited [R9] -> same size, not a
+        # union that only grows.
         assert result["before"] == 2  # R1 + the candidate's own L1 tag
-        assert result["after"] == 3  # + freshly cited R9
+        assert result["after"] == 2  # L1 traded for the freshly cited R9
         assert result["improved"] is True
 
     def test_v6_no_fresh_tag_is_not_improved(self, tmp_path):
+        """A content-free proposal is a *real*, measured regression now.
+
+        검토 A1 — before this fix, `after` was computed as a set union
+        (`before_ids | new_ids`), which can only grow or stay equal —
+        `after < before` was mathematically impossible, so V6 could never
+        actually fire. Promoting a no-op candidate consumes its own [L1]
+        tag and adds nothing back, so `after` is genuinely `before - 1`.
+        """
         _seed_gate_blocks(tmp_path, "충분히 긴 사유 문장입니다", 3)
         candidate_id = memory.propose_improvement(
             ".deepagents/AGENTS.md",
@@ -207,8 +218,9 @@ class TestVerifyImprovement:
             tmp_path,
         )
         result = memory.verify_improvement(candidate_id, tmp_path)
+        assert result["before"] == 1  # just the candidate's own L1 tag
+        assert result["after"] == 0  # L1 consumed, nothing cited to replace it
         assert result["improved"] is False
-        assert result["before"] == result["after"]
 
     def test_skills_target_before_after(self, tmp_path):
         skill_dir = tmp_path / ".deepagents" / "skills" / "plan-first"
