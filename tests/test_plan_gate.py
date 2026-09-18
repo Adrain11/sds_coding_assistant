@@ -9,7 +9,8 @@ that the returned message looks like a rejection.
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from assistant.events import GATE_BLOCK, EventWriter
@@ -60,7 +61,10 @@ def _approve_plan(
     """Drive a plan through create -> review -> approve.
 
     Uses the store the gate itself uses, so the gate's next
-    `_approved_plans()` scan sees it.
+    `_approved_plans()` scan sees it. Bypasses the `create_plan` *tool*
+    (which would append to `gate._known_plan_ids` itself, 검토 A2), so this
+    helper does that append by hand — otherwise `_approved_plans()` has no
+    way to find a plan created this way, by design (no directory scan).
     """
     store: PlanStore = gate._store  # noqa: SLF001 - test-only reach-in
     plan = store.create(
@@ -74,6 +78,7 @@ def _approve_plan(
         memory_refs=["R1"],
         allow_subagent=allow_subagent,
     )
+    gate._known_plan_ids.append(plan.plan_id)  # noqa: SLF001 - test-only reach-in
     store.review(plan.plan_id, "note")
     store.approve(plan.plan_id)
     return plan.plan_id
@@ -185,6 +190,84 @@ class TestTCB:
         result = gate.wrap_tool_call(
             _request("edit_file", {"file_path": libs_path}), handler
         )
+        handler.assert_not_called()
+        assert result.status == "error"
+
+    def test_dotdot_path_still_hits_tcb(self, gate, tmp_path):
+        """A `..`-laden path must still collapse onto the TCB prefix.
+
+        검토 A2/🔵's note: `os.path.normpath` (replacing `Path.resolve()` to
+        drop the syscall) must keep collapsing `..` the same way, or a
+        traversal path could dodge the TCB check. None of these
+        intermediate directories need to exist — normalization is lexical.
+        """
+        dotdot_path = str(
+            tmp_path
+            / ".deepagents"
+            / "skills"
+            / ".."
+            / ".."
+            / "assistant"
+            / "assistant"
+            / "plan_gate.py"
+        )
+        _approve_plan(gate, target_files=[dotdot_path])
+        handler = _ok_handler()
+        result = gate.wrap_tool_call(
+            _request("edit_file", {"file_path": dotdot_path}), handler
+        )
+        handler.assert_not_called()
+        assert result.status == "error"
+
+
+class TestNoBlockingIOInHotPath:
+    """The gate's hot path must never touch the filesystem this way.
+
+    검토 A2/EC6 — a middleware hook is not thread-pooled the way a plain
+    `@tool` body is (LangGraph's `ToolNode` only wraps a tool's own `_run`
+    in an executor via `BaseTool._arun`), so `Path.glob`/`iterdir`/
+    `resolve` running here directly on the event-loop thread is exactly
+    what tripped Blockbuster in the TUI despite every headless unit test
+    passing. These tests fail loudly if that regresses, instead of relying
+    on behavior alone to prove the syscalls are gone.
+    """
+
+    def test_approved_write_needs_no_directory_scan_or_resolve(self, gate, tmp_path):
+        target = str(tmp_path / "hello.py")
+        _approve_plan(gate, target_files=[target])
+
+        def _boom(*_args, **_kwargs):
+            msg = "must not be called from the gate's hot path"
+            raise AssertionError(msg)
+
+        with (
+            patch.object(Path, "glob", _boom),
+            patch.object(Path, "iterdir", _boom),
+            patch.object(Path, "resolve", _boom),
+        ):
+            handler = _ok_handler()
+            result = gate.wrap_tool_call(
+                _request("write_file", {"file_path": target}), handler
+            )
+        handler.assert_called_once()
+        assert result.content == "ok"
+
+    def test_blocked_write_also_needs_no_directory_scan_or_resolve(self, gate):
+        """No approved plan at all — still must not scan or resolve (D1)."""
+
+        def _boom(*_args, **_kwargs):
+            msg = "must not be called from the gate's hot path"
+            raise AssertionError(msg)
+
+        with (
+            patch.object(Path, "glob", _boom),
+            patch.object(Path, "iterdir", _boom),
+            patch.object(Path, "resolve", _boom),
+        ):
+            handler = _ok_handler()
+            result = gate.wrap_tool_call(
+                _request("write_file", {"file_path": "hello.py"}), handler
+            )
         handler.assert_not_called()
         assert result.status == "error"
 

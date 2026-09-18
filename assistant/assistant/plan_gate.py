@@ -104,18 +104,38 @@ _TCB_PATH_PREFIXES = (
 def _relative_to_project(path: str, project_root: Path) -> str:
     """Best-effort project-relative, forward-slashed form of `path`.
 
-    Used only for TCB/scope string comparison — never for filesystem access,
-    so a path outside `project_root` (which `.relative_to` rejects) falls
-    back to its resolved absolute form instead of raising.
+    Used only for TCB/scope string comparison — never for filesystem access.
+    검토 A2: this used to call `Path.resolve()`, which is a `stat`/symlink
+    syscall — and this function is called (via `_is_tcb_path`/
+    `_path_in_scope`) from `_check()` on *every* gated tool call, i.e. from
+    a middleware hook that LangGraph's `ToolNode` does not thread-pool the
+    way it does a plain `@tool`'s body. That syscall running directly on
+    the event-loop thread was the same class of bug as EC6's `glob` (and
+    S13's `os.mkdir` before it) — a third recurrence of one root cause.
+
+    `os.path.normpath` collapses `..`/`.` segments exactly like `resolve()`
+    did (verified: `.deepagents/skills/../../assistant/x.py` still
+    normalizes to `assistant/x.py`, see `test_dotdot_path_still_hits_tcb`),
+    but is pure string manipulation — no syscall, so it is safe to call
+    from an unprotected hook. It does *not* follow symlinks the way
+    `resolve()` did; that distinction only matters for filesystem access,
+    which this function's docstring already rules out.
+
+    A path outside `project_root` normalizes to its own absolute,
+    forward-slashed form instead of raising, mirroring the old
+    `.relative_to` fallback.
     """
-    candidate = Path(path)
-    if not candidate.is_absolute():
-        candidate = project_root / candidate
-    resolved = candidate.resolve()
-    try:
-        return resolved.relative_to(project_root.resolve()).as_posix()
-    except ValueError:
-        return resolved.as_posix()
+    candidate = path.replace("\\", "/")
+    if not os.path.isabs(candidate):
+        candidate = f"{project_root.as_posix()}/{candidate}"
+    normalized = os.path.normpath(candidate).replace(os.sep, "/")
+    project_norm = os.path.normpath(project_root.as_posix()).replace(os.sep, "/")
+    if normalized == project_norm:
+        return ""
+    prefix = project_norm.rstrip("/") + "/"
+    if normalized.startswith(prefix):
+        return normalized[len(prefix) :]
+    return normalized
 
 
 def _is_tcb_path(path: str, project_root: Path) -> bool:
@@ -238,6 +258,14 @@ class PlanGateMiddleware(AgentMiddleware):
         self._reviewer = reviewer if reviewer is not None else _default_reviewer
         self._gate_log = self._project_root / ".deepagents" / "plans" / "gate.log"
         self._announced_approved: set[tuple[str | None, str]] = set()
+        # 검토 A2/EC6 — one directory listing here, at the same construction
+        # time as the `mkdir` above, discovers plans approved in an earlier
+        # process (D4's whole premise: approval happens out-of-band). This
+        # is the *only* place `list_ids()` (a `glob`) runs for this
+        # middleware — `_approved_plans()` below reads this in-memory list
+        # plus whatever `create_plan` appends to it, never the directory
+        # itself, so the per-tool-call hot path does zero directory I/O.
+        self._known_plan_ids: list[str] = self._store.list_ids()
         self.tools = self._build_tools()
 
     # --- D3: plan tools --------------------------------------------------
@@ -311,6 +339,10 @@ class PlanGateMiddleware(AgentMiddleware):
                 )
             except PlanError as exc:
                 return f"계획 생성 거부됨: {exc}"
+            # 검토 A2/EC6 — the only in-process update to `_known_plan_ids`;
+            # `_approved_plans()` can now find this plan without a directory
+            # scan once it is approved (see `__init__`'s comment).
+            self._known_plan_ids.append(plan.plan_id)
             thread_id = thread_id_from_config()
             _safe_record(
                 self._ev,
@@ -600,8 +632,26 @@ class PlanGateMiddleware(AgentMiddleware):
     # --- D1/D6: the gate itself -------------------------------------------
 
     def _approved_plans(self) -> list[Plan]:
+        """Every approved plan this middleware instance knows about.
+
+        검토 A2/EC6 — deliberately does **not** call `self._store.list_ids()`
+        (a `Path.glob`, blocking directory I/O). This runs from
+        `wrap_tool_call`/`awrap_tool_call` on *every* gated tool call —
+        unlike a plain `@tool` body, a middleware hook is not automatically
+        thread-pooled by LangGraph's `ToolNode` (that fallback is
+        `BaseTool._arun`'s, which only wraps a tool's own `_run`), so a
+        directory scan here runs directly on the event-loop thread and
+        Blockbuster raises — the exact failure D6 then turns into a
+        fail-closed block, silently denying every write/edit/delete/task
+        even with a real approved plan on disk. `self._known_plan_ids` is
+        populated once at construction time (`__init__`, alongside
+        `PlanStore`'s own `mkdir`) and appended to in-process by
+        `create_plan` — both zero-syscall or one-time-syscall paths — so
+        this loop only ever does single-file reads for ids already known,
+        never a listing.
+        """
         plans: list[Plan] = []
-        for plan_id in self._store.list_ids():
+        for plan_id in self._known_plan_ids:
             try:
                 plan = self._store.get(plan_id)
             except PlanError:

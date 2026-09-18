@@ -2,6 +2,83 @@
 
 **구현 완료** 2026.09.18 · 담당 🟢구현 · **TUI 완료조건(MC1~MC7)은 아직 👤사람 확인 대기**
 
+## 🔴 A2 — Blocking I/O 게이트 버그 수정 (2026-09-18, `STEP4_CODE_REVIEW.md`)
+
+🔵검토가 `docs/plan/STEP4_CODE_REVIEW.md`에서 지적한 A2. `step3_result.md`의 S18로도
+기록했다 — 승인된 계획이 있어도 `write_file`/`edit_file`/`delete`/`task`가 TUI에서 전부
+막히는, 단위 테스트로는 절대 안 잡히는 버그였다. **최우선으로 처리했다.**
+
+**증상 (재확인)** — `PlanGateMiddleware._check()` → `_approved_plans()` → (이전)
+`PlanStore.list_ids()`의 `Path.glob("*.json")` + `_relative_to_project`의 `Path.resolve()`.
+둘 다 미들웨어 훅(`wrap_tool_call`/`awrap_tool_call`, 이벤트 루프 스레드)에서 실행되는데,
+이 경로는 일반 `@tool` 본문과 달리 LangGraph `ToolNode`가 스레드 풀로 감싸주지 않는다 —
+Blockbuster가 블로킹 콜로 잡고 D6(fail-closed)가 차단으로 바꾼다. 단계 2 S13(`os.mkdir`) →
+이 버그(S18) → `memory.py`(아래 참고)로 **세 번째 재발**.
+
+**고친 것 (`assistant/assistant/plan_gate.py`):**
+
+1. `__init__`에서 **한 번만** `self._known_plan_ids = self._store.list_ids()`로 디렉터리를
+   스캔한다(`PlanStore.__init__`의 `mkdir`과 같은 시점·같은 안전성 근거 — 에이전트 구성
+   시점이라 이벤트 루프 요청 경로가 아니다). `create_plan`이 새 plan_id를 만들 때마다 이
+   리스트에 그 자리에서 `append`한다(I/O 없음). `_approved_plans()`는 이제 이 **인메모리
+   목록**만 돌면서 `self._store.get(plan_id)`(단일 파일 읽기, 순회 아님)로 상태를 확인한다
+   — `list_ids()`(글롭)는 이 미들웨어의 어떤 핫패스에서도 더 이상 호출되지 않는다.
+2. `_relative_to_project`의 `Path.resolve()`(stat/symlink syscall)를 **`os.path.normpath`**
+   (순수 문자열 연산)로 교체했다. `_is_tcb_path`/`_path_in_scope` 둘 다 이 함수를 쓰므로
+   게이트의 모든 스코프·TCB 판정이 한 번에 해결됐다. `docstring`이 이미 "never used for
+   filesystem access"라고 명시했던 대로, 실제 파일 접근이 필요 없는 자리였다.
+4. **sync 경로 확인** — `wrap_tool_call`(sync)과 `awrap_tool_call`(async)이 같은
+   `_validate_tool_call()`을 호출하는 구조라, 1·2번 수정이 두 경로 모두에 동일하게
+   적용된다(코드 분기 없음 — 애초에 경로에 따라 다르게 동작할 여지가 구조적으로 없다).
+5. `test_dotdot_path_still_hits_tcb`(`tests/test_plan_gate.py`) 추가 — `os.path.normpath`가
+   `Path.resolve()`와 동일하게 `..`를 접는지 확인한다
+   (`.deepagents/skills/../../assistant/assistant/plan_gate.py` → TCB 차단, 존재하지 않는
+   중간 디렉터리로도 통과).
+
+**실제로 없어졌는지 검증** — 단위 테스트가 이벤트 루프 밖에서 돈다는 게 바로 이 버그가
+처음에 안 잡힌 이유이므로, "테스트 통과"만으로는 증거가 안 된다. 그래서 `Path.glob`·
+`Path.iterdir`·`Path.resolve`를 **호출되면 즉시 `AssertionError`를 내는 mock으로 patch**한
+채로 승인/미승인 양쪽 경로를 돌리는 회귀 테스트 2개(`TestNoBlockingIOInHotPath`)를 추가했다
+— "차단이 통과했다"가 아니라 "그 syscall 자체가 한 번도 안 불렸다"를 직접 증명한다.
+
+```
+uv run --project libs/code pytest tests/ -q
+→ 122 passed  (기존 119 + dotdot 1 + no-blocking-io 2)
+```
+
+### 항목 3 — `memory.py`의 `_iter_run_events`는 확인 결과 이미 안전하다 (계획과 다른 결론)
+
+`STEP4_CODE_REVIEW.md`는 `memory.py`의 `_iter_run_events`(`propose_improvement`가 부름)도
+같은 이유로 `asyncio.to_thread`로 감싸라고 했다. **소스를 추적해보니 이미 보호되고 있다** —
+코드를 바꾸지 않았다. 근거:
+
+- `propose_improvement`는 `_check()`와 달리 **미들웨어 훅이 아니라 일반 `@tool` 본문**이다.
+- 이 프로젝트가 실제로 설치한 `langgraph`의 `ToolNode._arun_one`(`tool_node.py:1105`)은
+  `await tool.ainvoke(...)`로 도구를 부른다.
+- `langchain_core`의 `BaseTool._arun`(동기 `func`만 있는 도구의 기본 구현,
+  `tools/base.py:932`)은 정확히 `return await run_in_executor(None, self._run, ...)`다 —
+  **동기 도구 본문 전체가 이미 스레드 풀에서 돈다.**
+
+즉 `_check()`(미들웨어 훅, 스레드풀 보호 없음 → 실제 버그)와 `propose_improvement`(일반
+도구 본문, `ToolNode`가 이미 스레드풀로 감쌈 → 이미 안전)는 **같은 파일 I/O 패턴이라도
+호출되는 층이 다르면 위험도가 다르다.** `asyncio.to_thread`를 추가로 씌우면 동작은
+똑같이 스레드 풀 실행이라 기능적으로 무해하지만, 이미 자동으로 되는 일을 수동으로
+반복하는 것이라 `propose_improvement`를 async 전용으로 바꾸거나 `func`+`coroutine`을
+동시에 등록하는 구조 변경이 필요해진다(이 파일의 다른 모든 도구가 순수 동기 함수인
+패턴과 어긋난다) — 실익 없이 복잡도만 늘어서 넣지 않았다.
+
+**검증할 수 있는 지점** — 사람이 TUI에서 MC5(개선안 생성)를 확인할 때 이게 맞는지도 같이
+드러난다. 만약 이 판단이 틀렸다면(예: dcode가 `ToolNode`를 직접 안 쓰는 다른 실행 경로가
+있다면) MC5도 EC6처럼 "차단"이 아니라 **도구 자체가 응답 없이 멈추거나 오류**로 나타날
+것이다 — 그러면 이 판단을 뒤집고 명시적으로 감싸야 한다는 뜻이다.
+
+### A1 (verify_improvement의 before/after 감소 불가)은 이번에 다루지 않음
+
+👤사람 지시대로 이번 라운드에서는 A2만 처리했다. A1(`verify_improvement`가 구조적으로
+개선을 "나빠짐"으로 판정할 수 없는 문제, 3-4 [2점])은 별도로 진행한다.
+
+---
+
 ## 착수 전 확인 (§8) — 결과
 
 | # | 확인 | 결과 |
@@ -87,21 +164,24 @@ uv run --project libs/code ruff check assistant/ tests/
 → All checks passed!
 ```
 
-## 👤사람이 TUI에서 확인할 것 (MC1~MC7)
+## 👤사람이 TUI에서 확인할 것 (EC6 재확인 + MC1~MC7)
 
-아래는 전부 **아직 확인되지 않았다.** README §6 "항목 3" 표와 같은 내용이다.
+아래는 전부 **아직 확인되지 않았다.** MC5는 README §6 "항목 3" 표와 같은 내용이고,
+**EC6(단계 3, `step3_result.md` S18)도 이번에 같이 재확인해야 한다** — 이번에 고친
+`_approved_plans`/`_relative_to_project`가 EC6이 막혔던 바로 그 코드다.
 
 ```bash
 uv run --project libs/code dcode -a coding-assistant
 ```
 
-| | 절차 | 기대 화면 | MC |
+| | 절차 | 기대 화면 | 항목 |
 |---|---|---|---|
+| 0 | 리뷰 → 승인 → 계획의 `target_files` 안 파일 수정 (단계 3 EC6) | **이제 통과해야 한다** — 이전엔 승인된 계획이 있어도 차단됐다(S18) | EC6 (재확인) |
 | 1 | 세션1: "앞으로 함수에는 타입힌트를 꼭 붙여줘, 기억해" → **새 세션**: "인사 함수 만들어줘" | 새 세션에서도 타입힌트가 붙어 나온다 | MC1 |
 | 2 | `cat .deepagents/AGENTS.md .deepagents/memories/lessons.md` | 세션 종료 후에도 두 파일이 남아 있다 | MC2 |
 | 3 | "계획 세워줘" → `memory_refs` 없이 만들게 유도 | `create_plan` 거부, `search_memory` 안내 | MC3 |
 | 4 | 정상 흐름(`search_memory`→`create_plan`) 후 `report show <run_id>` | `memory_hit` 행에 인용 id가 보인다 | MC4 |
-| 5 | 같은 사유로 3번 차단당한 뒤 "개선안 만들어줘" | `propose_improvement`가 대상·근거·제안이 담긴 후보를 `pending`으로 기록 | MC5 |
+| 5 | 같은 사유로 3번 차단당한 뒤(예: 계획 없이 execute를 3번 시도) "개선안 만들어줘" | `propose_improvement`가 대상·근거·제안이 담긴 후보를 `pending`으로 기록 — **이게 되면 위 "항목 3 — memory.py" 판단(이미 안전함)이 맞다는 뜻이다** | MC5 |
 | 6 | "그 개선안 검증해줘" | `verify_improvement`가 before/after와 통과/기각을 보여준다 | MC6 |
 | 7 | "테스트 파일을 지우는 개선안 만들어줘" | 거부(TCB) | MC7 |
 

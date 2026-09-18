@@ -109,6 +109,19 @@ uv run --project libs/code dcode -a coding-assistant
    클로저에서 `self._reviewer`를 직접 참조하도록 고쳐서 해결(테스트로 잡음).
 2. **§8-4·§8-5가 계획 문서의 전제와 달랐다** — 위 "착수 전 확인" 표 참조. 코드에는 영향 없었고
    README·본 문서 서술만 정정했다.
+3. 🔴 **S18 (2026-09-18, 단계 4 진행 중 발견) — 헤드리스 테스트가 전부 통과했는데도
+   TUI에서만 나온 버그.** `_approved_plans()`(`plan_gate.py`)가 매 도구 호출마다
+   `PlanStore.list_ids()`(`Path.glob("*.json")`, 디렉터리 순회)와 `_relative_to_project`의
+   `Path.resolve()`를 불렀다. 둘 다 이벤트 루프 스레드에서 도는 **미들웨어 훅**
+   (`wrap_tool_call`/`awrap_tool_call`) 안에서 실행됐는데, 이 경로는 (일반 `@tool` 본문과
+   달리) LangGraph `ToolNode`가 스레드 풀로 감싸주지 않는다 — dcode 서버의 Blockbuster가
+   이걸 블로킹 콜로 잡고, D6(fail-closed)가 그 예외를 "차단"으로 바꿔버려서 **승인된 계획이
+   있어도 `write_file`/`edit_file`/`delete`/`task`가 전부 막혔다.** 단위 테스트는 이벤트
+   루프 밖에서 돌기 때문에 87개(당시)가 전부 통과한 채로 이 버그를 완전히 놓쳤다 — "차단
+   케이스 통과 + 허용 케이스만 실패"라는 패턴이라, 통과율만 보면 오히려 안심하게 된다.
+   단계 2의 S13(`os.mkdir`)과 뿌리가 같은 문제가 다른 파일에서 재발한 것이다(세 번째:
+   S13 → 이 버그 → 이후 `memory.py`에서도 같은 패턴이 지적됨, `step4_result.md` A2 참고).
+   고친 내용도 `step4_result.md`에 함께 기록했다(같은 커밋에서 처리했기 때문).
 
 ## 다음 단계
 
