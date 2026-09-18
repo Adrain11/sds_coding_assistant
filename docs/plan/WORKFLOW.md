@@ -7,11 +7,7 @@
 
 ---
 
-## 0. 현재 상태
-
-> ⚠️ **단계가 끝날 때마다 이 절을 갱신하고 커밋한다.** 이게 세 환경이 공유하는 유일한 진행 상황판이다.
-
-### ✅ 전 단계 완료 — 남은 것은 제출뿐 (2026.09.18)
+## 0. 현재 상태 — **전부 완료. 남은 것은 제출뿐이다** (2026.09.18)
 
 | 단계 | 상태 | 산출물 |
 |---|---|---|
@@ -19,44 +15,52 @@
 | 1 — 소스 vendoring + 빌드 | ✅ 완료 (09.17) | `libs/`, 빌드 통과 |
 | 1-a — 이식 (skills·설정) | ✅ 완료 (09.17) | `.agents/`, `.claude/`, `.deepagents/`, `SKILLS.md` |
 | **2 — 이벤트 로거** | ✅ **완료 (09.17)** | `assistant/{events,observability,report}.py` · **DC1~DC8 전부 통과** · `step2_result.md` |
-| **3 — 계획 게이트** | ✅ **완료 (09.18)** | `plan_gate.py`·`plans.py` · **EC1~EC9 전부 통과**(👤사람 TUI 실측) · `step3_result.md` |
-| **4 — 메모리·자기개선** | ✅ **완료 (09.18)** | `memory.py` · **MC1~MC7 전부 통과**(같은 세션) · 검토 A1·A2 수정 반영 · `step4_result.md` |
-| **5 — PEP8 + README + ZIP** | ✅ **완료 (09.18)** | `ruff.toml` + docstring · 제출 ZIP 빌드·풀어서 검증 2회 · `step5_ruff_docstrings.md` · `step5_zip_verify.md` |
+| **3 — 계획 게이트** | ✅ **완료 (09.18)** | `plan_gate.py`·`plans.py` · **EC1~EC9 전부 통과** (👤사람 TUI 실측) · `step3_result.md` |
+| **4 — 메모리·자기개선** | ✅ **완료 (09.18)** | `memory.py` · **MC1~MC7 전부 통과** (같은 세션 실측) · `step4_result.md` |
+| **5 — PEP8 · README · ZIP** | ✅ **완료 (09.18)** | `ruff.toml` + docstring · 제출 ZIP 빌드·풀어서 검증 · `step5_ruff_docstrings.md` · `step5_zip_verify.md` |
 
 **검증 현황** — 단위 테스트 125개 통과 · `ruff check`/`ruff format --check` clean ·
 제출 ZIP(22MB)을 새 디렉터리에 풀어 README만 보고 빌드·실행·테스트까지 재현 완료.
 
-**채점 항목별 확인 방법은 [`docs/evaluation-mapping.md`](../evaluation-mapping.md)에 있다** —
-16개 세부항목(1-1 ~ 4-4)을 "무엇을 실행하면 무엇이 보이는가"로 정리한 색인이다.
+### 채점 항목별 증거
 
-### 리뷰에서 잡아 고친 것 (채점 2-3의 증거)
+채점자용 색인은 **[`docs/evaluation-mapping.md`](../evaluation-mapping.md)** 하나다 —
+16개 세부항목(1-1 ~ 4-4)마다 "무엇을 실행하면 무엇이 보이는가"가 적혀 있다.
 
-| | 무엇 | 결과 |
+| 항목 | 증거 | 실측 |
 |---|---|---|
-| 단계 2 R1~R4·C1~C6 | 재시도가 안 잡히는 구조(R2) 등 | 전부 반영 — `STEP2_REVIEW_RESPONSE.md` |
-| 단계 3 R1~R6 | `delete`·`task` 차단 누락, `allow_shell` 제거 | **6건 전부 채택** — `STEP3_REVIEW_RESPONSE.md` |
-| 단계 4 A1 | `verify_improvement`의 before/after가 감소 불가였다 | 후보 승격 시뮬레이션으로 교체 (`968e6bc`) |
-| 단계 4 A2 | 게이트 핫패스의 blocking I/O → 승인된 계획도 차단됨(S18) | 순회 제거 + `normpath` + `to_thread` (`7d166f2`, `40ab1df`) |
-| 단계 5 | ZIP `git archive` pathspec이 `docs/evaluation-mapping.md`를 빠뜨렸다 | pathspec을 `docs` 전체로 (`da68143`, `599bff0`) |
+| 1 코드 기준 [10] | `ruff.toml`(`E`·`F`·`I`·`N`·`D`+`D417`, google convention) + `assistant/` docstring | `ruff check assistant/ tests/` |
+| 2 계획 게이트 [10] | `plan_gate.py`·`plans.py` + `docs/plan/` 계획·리뷰·반영 문서 | **EC1~EC9** (`step3_result.md`) |
+| 3 메모리·자기개선 [10] | `memory.py` + `.deepagents/AGENTS.md`·`memories/` | **MC1~MC7** (`step4_result.md`) |
+| 4 모니터링 [10] | `observability.py`·`report.py` | **DC1~DC8** (`step2_result.md`) |
 
-### 📋 제출 체크리스트
+### 마지막에 잡은 결함들 (전부 수정 완료)
 
-**ZIP 빌드** — 저장소 루트에서:
+| | 무엇 | 어떻게 잡혔나 |
+|---|---|---|
+| **S18 / A2** | 게이트 핫패스의 blocking I/O (`glob`·`Path.resolve()`·`read_text`·gate log write)가 이벤트 루프에서 `BlockingError`를 내고, fail-closed가 그걸 차단으로 바꿨다 — **승인된 계획으로도 전부 막혔다** | 👤사람의 **EC6 TUI 실측**. 단위 테스트 119개는 전부 통과했다 (이벤트 루프 밖에서 도니까) |
+| **A1** | `verify_improvement`의 `before`/`after`가 합집합이라 **수학적으로 감소 불가** → "나빠지면 미반영"이 발동할 수 없었다 | 🔵검토 코드 리뷰 + `before=7 after=8` 실측 |
+| **improve_end** | `status`/`error`가 `data` 안에 묻혀 `report fail`이 실패를 못 찾았다 (R-A 재발) | 🔵검토가 `report show`에 ERROR 행이 있는데 헤더가 "실패 0"인 것을 발견 |
+| **ZIP pathspec** | `git archive` 목록이 `docs/plan`만 넣어 **`docs/evaluation-mapping.md`가 ZIP에서 빠졌다** — README가 채점 색인으로 링크하는 파일 | 🟢구현의 **ZIP 재검증**. clone 검증으로는 못 잡는다 (검토 X3가 경고한 유형) |
+
+**공통 교훈** — 단위 테스트 통과는 동작을 증명하지 않는다. 세 번(`S13` → `EC6` → `A2`)
+같은 뿌리의 버그가 재발했고 전부 실행해봐야 나왔다. 그래서 이 프로젝트는
+**TUI/ZIP 실측만 완료 증거로 인정**했다.
+
+### 제출 절차
 
 ```bash
-git archive --format=zip --output=/tmp/sds_coding_assistant_submit.zip HEAD --   README.md docs .deepagents assistant tests libs .env.example ruff.toml
+git archive --format=zip --output=/tmp/sds_coding_assistant_submit.zip HEAD -- \
+  README.md docs .deepagents assistant tests libs .env.example ruff.toml
 ```
 
-| | |
-|---|---|
-| 기한 | **2026.09.20(일) 23:59:59** |
-| 형식 | ZIP 파일 (GitHub 링크 아님) |
-| 닉네임 | **Adrian** — 성함 금지 |
-| 포함 | `README.md` · `docs/` · `.deepagents/` · `assistant/` · `tests/` · `libs/`(전체) · `.env.example` · `ruff.toml` |
-| 제외 | `.claude/` · `.agents/` · `CLAUDE.md` · `SKILLS.md` · `skills-lock.json` · `.git/` · `runs/` · `.venv/` |
+- **닉네임** `Adrian` — 성함 금지
+- **포함** `README.md` · `docs/`(전체) · `.deepagents/` · `assistant/` · `tests/` · `libs/`(전체) · `.env.example` · `ruff.toml`
+- **제외** `.claude/` · `.agents/` · `CLAUDE.md` · `SKILLS.md` · `skills-lock.json` · `.git/` · `runs/` · `.venv/`
+- `docs`를 디렉터리째 넣는다 — 개별 파일을 열거하면 새 문서가 생길 때 빠진다 (`step5_zip_verify.md` §7)
+- 기한 **2026.09.20(일) 23:59:59**
 
-> 🔴 `pathspec`은 `docs/plan`이 아니라 **`docs`**다. 좁히면 `docs/` 바로 밑의 문서가 빠진다 —
-> 실제로 `evaluation-mapping.md`가 그렇게 빠졌고 ZIP 재검증에서만 잡혔다 (`step5_zip_verify.md` §7).
+---
 
 ## 1. 세 환경의 역할
 
