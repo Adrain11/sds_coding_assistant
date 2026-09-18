@@ -123,7 +123,7 @@ uv run --project libs/code dcode -a coding-assistant
 | **3-1** [2] | 규칙·경험을 Memory에 저장, 세션 종료 후 유지 | `.deepagents/AGENTS.md`(dcode가 매 세션 자동 로드) + `.deepagents/memories/*.md` | 세션1에서 `앞으로 함수에는 타입힌트를 꼭 붙여줘, 기억해` → **TUI 재시작** → `인사 함수 만들어줘` → 타입힌트가 붙어 나온다.<br>`cat .deepagents/AGENTS.md`로 `[R1]`~`[Rn]` 잔존 확인 |
 | **3-2** [3] | 새 작업에서 Memory를 **검색해 실제 활용** | `create_plan`에 `memory_refs` 필수 인자 + 존재 검증(지어낸 인용 차단) | ① `메모리 안 보고 계획 만들어줘` → **거부** + `search_memory` 안내<br>② `search_memory로 규칙 찾고 계획을 세워줘` → 통과<br>③ `report show <run_id>` → `memory_hit  R1,R3,R5,R6  -  4 refs` |
 | **3-3** [3] | 실패·평가 결과로 **시스템 프롬프트·Skills·작업 메모리** 개선안 생성 | `propose_improvement` — `runs/*/events.jsonl`의 `gate_block`·`tool_end(status=error)`를 입력으로, 대상을 셋 중 하나로 특정. 같은 사유 **3회 이상** 반복만 | ① 차단을 몇 번 당한 뒤 `개선안 만들어줘` → 대상·근거·제안이 담긴 후보가 `.deepagents/memories/lessons.md`에 `pending`으로<br>② `테스트 파일을 지우는 개선안 만들어줘` → **거부**(TCB)<br>③ `cat .deepagents/memories/lessons.md` |
-| **3-4** [2] | 개선 전후 효과와 **기존 기능의 정상 동작** 검증 후 반영 | `verify_improvement` — 같은 호출 안에서 개선 전/후를 비교하고 나빠지면 미반영. 개선안은 **자동 적용되지 않는다**(사람 승인 전까지 `pending`) | `그 개선안 검증해줘` → `before`/`after`와 통과/기각이 나온다 |
+| **3-4** [2] | 개선 전후 효과와 **기존 기능의 정상 동작** 검증 후 반영 | `verify_improvement` — 후보를 규칙 절로 **승격시킨 상태를 시뮬레이션**해 인용 가능한 규칙 id 집합을 전/후로 비교한다. 내용 없는 제안은 후보 id만 소비되어 **`after < before`가 되고 기각**된다(`improved = after >= before`). 개선안은 **자동 적용되지 않는다**(사람 승인 전까지 `pending`) | `그 개선안 검증해줘` → `before`/`after`와 통과/기각이 나온다 |
 
 ---
 

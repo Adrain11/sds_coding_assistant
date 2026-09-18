@@ -15,8 +15,11 @@
 
 ```bash
 git archive --format=zip --output=/tmp/sds_coding_assistant_submit.zip HEAD -- \
-  README.md docs/plan .deepagents assistant tests libs .env.example ruff.toml
+  README.md docs .deepagents assistant tests libs .env.example ruff.toml
 ```
+
+> 🔴 **`docs/plan`이 아니라 `docs`다.** 개별 파일을 열거하면 `docs/` 바로 밑에 새 문서가
+> 생길 때마다 빠진다(§7에서 `evaluation-mapping.md`가 그렇게 빠졌다). 디렉터리째 넣어 재발을 막는다.
 
 > `ruff.toml`은 작업 1 당시엔 없었다 — 작업 2(ruff 설정)에서 새로 생긴 저장소 루트 파일이라
 > 뒤늦게 목록에 추가했다. 아래 §6에 작업 2 이후 재검증 결과를 덧붙인다.
@@ -136,7 +139,7 @@ ruff.toml tests` — 지시된 제외 목록(`.claude`·`.agents`·`CLAUDE.md`·
 
 ```bash
 git archive --format=zip --output=/tmp/sds_coding_assistant_submit.zip HEAD -- \
-  README.md docs/plan docs/evaluation-mapping.md .deepagents assistant tests libs \
+  README.md docs .deepagents assistant tests libs \
   .env.example ruff.toml
 ```
 
