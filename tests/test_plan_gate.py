@@ -12,7 +12,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-from assistant.events import EventWriter
+from assistant.events import GATE_BLOCK, EventWriter
 from assistant.plan_gate import PlanGateMiddleware
 from assistant.plans import PlanStore
 from langchain_core.messages import ToolMessage
@@ -288,6 +288,41 @@ class TestPlanToolsExposed:
         )
         assert "거부됨" in result
 
+    def test_mc3_create_plan_rejects_empty_memory_refs(self, gate):
+        create_plan = next(t for t in gate.tools if t.name == "create_plan")
+        result = create_plan.invoke(
+            {
+                "title": "제목입니다 충분히 길게",
+                "requirements": "요구사항입니다 충분히 길게",
+                "scope": "범위입니다 충분히 길게",
+                "done_criteria": "완료조건입니다 충분히 길게",
+                "target_files": ["a.py"],
+                "steps": ["첫 단계"],
+                "test_plan": "테스트 방법입니다 충분히 길게",
+                "memory_refs": [],
+            }
+        )
+        assert "거부됨" in result
+        assert "memory_refs" in result
+
+    def test_create_plan_rejects_nonexistent_memory_ref(self, gate):
+        """V2 — a made-up citation is rejected, not just an empty list (M1)."""
+        create_plan = next(t for t in gate.tools if t.name == "create_plan")
+        result = create_plan.invoke(
+            {
+                "title": "제목입니다 충분히 길게",
+                "requirements": "요구사항입니다 충분히 길게",
+                "scope": "범위입니다 충분히 길게",
+                "done_criteria": "완료조건입니다 충분히 길게",
+                "target_files": ["a.py"],
+                "steps": ["첫 단계"],
+                "test_plan": "테스트 방법입니다 충분히 길게",
+                "memory_refs": ["R99"],
+            }
+        )
+        assert "거부됨" in result
+        assert "R99" in result
+
     def test_review_plan_reaches_reviewed_via_fake_reviewer(self, gate):
         create_plan = next(t for t in gate.tools if t.name == "create_plan")
         review_plan = next(t for t in gate.tools if t.name == "review_plan")
@@ -354,3 +389,84 @@ class TestGateBlockLogged:
         assert len(run_dirs) == 1
         events_text = (run_dirs[0] / "events.jsonl").read_text(encoding="utf-8")
         assert "gate_block" in events_text
+
+
+class TestMemoryTools:
+    """Step 4's three new tools on the same `PlanGateMiddleware` (§6)."""
+
+    def test_search_memory_finds_seeded_rule(self, gate):
+        search_memory = next(t for t in gate.tools if t.name == "search_memory")
+        result = search_memory.invoke({"query": "테스트용"})
+        assert "[R1]" in result
+
+    def test_search_memory_no_match_explains_why(self, gate):
+        search_memory = next(t for t in gate.tools if t.name == "search_memory")
+        result = search_memory.invoke({"query": "존재하지않는말"})
+        assert "결과가 없습니다" in result
+
+    def test_mc7_propose_improvement_rejects_tcb_target(self, gate):
+        propose = next(t for t in gate.tools if t.name == "propose_improvement")
+        result = propose.invoke(
+            {
+                "target_path": "tests/test_plan_gate.py",
+                "reason": "테스트 파일을 지우려 시도한 사유입니다",
+                "proposed_text": "테스트를 지우도록 만드는 제안 문장입니다",
+            }
+        )
+        assert "거부됨" in result
+        assert "TCB" in result
+
+    def test_propose_then_verify_round_trip(self, gate, tmp_path):
+        gate._ev.start_run(thread_id="t1")  # noqa: SLF001
+        for _ in range(3):
+            gate._ev.record(  # noqa: SLF001
+                GATE_BLOCK,
+                thread_id="t1",
+                name="execute",
+                data={"reason": "충분히 긴 반복 사유 문장입니다"},
+            )
+        gate._ev.flush()  # noqa: SLF001
+
+        propose = next(t for t in gate.tools if t.name == "propose_improvement")
+        verify = next(t for t in gate.tools if t.name == "verify_improvement")
+
+        msg = propose.invoke(
+            {
+                "target_path": ".deepagents/AGENTS.md",
+                "reason": "충분히 긴 반복 사유 문장입니다",
+                "proposed_text": "[R9] 충분히 긴 제안 문장입니다",
+            }
+        )
+        assert "생성됨" in msg
+        candidate_id = msg.split("candidate_id=")[1].split(",")[0]
+
+        result = verify.invoke({"candidate_id": candidate_id})
+        assert "before=" in result
+        assert "after=" in result
+        assert "통과" in result
+
+    def test_mc4_create_plan_logs_memory_hit_event(self, gate, tmp_path):
+        from assistant.observability import EventLoggerMiddleware
+
+        outer = EventLoggerMiddleware(gate._ev)  # noqa: SLF001
+        outer.before_agent(state={"messages": []}, runtime=None)
+        create_plan = next(t for t in gate.tools if t.name == "create_plan")
+        create_plan.invoke(
+            {
+                "title": "제목입니다 충분히 길게",
+                "requirements": "요구사항입니다 충분히 길게",
+                "scope": "범위입니다 충분히 길게",
+                "done_criteria": "완료조건입니다 충분히 길게",
+                "target_files": ["a.py"],
+                "steps": ["첫 단계"],
+                "test_plan": "테스트 방법입니다 충분히 길게",
+                "memory_refs": ["R1"],
+            }
+        )
+        outer.after_agent(state={"messages": []}, runtime=None)
+        gate._ev.flush()  # noqa: SLF001
+
+        run_dirs = list((tmp_path / "runs").iterdir())
+        assert len(run_dirs) == 1
+        events_text = (run_dirs[0] / "events.jsonl").read_text(encoding="utf-8")
+        assert "memory_hit" in events_text

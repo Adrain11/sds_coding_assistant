@@ -36,11 +36,23 @@
 - YOLO 모드로 리뷰를 건너뛰지 않는다. 헤드리스/비대화형 실행(`-n`)에서는 `--rubric "..."`으로
   대체한다.
 
-## 메모리 (Self-Improving)
+## 메모리 (Step 4, Self-Improving)
 
-- 작업을 시작하기 전에 관련 메모리(`~/.deepagents/<agent>/memories/*.md`)를 먼저 확인한다.
+- **계획을 세우기 전에 `search_memory(query)`를 부른다.** 위 규칙 절의 `[R1]`..`[R5]`와
+  `.deepagents/memories/lessons.md`의 개선 후보(`[L1]`..)를 검색한다.
+- **`create_plan`은 `memory_refs`가 비어 있거나 지어낸 id면 거부된다** — 실제로 존재하는
+  `[Rn]`/`[Ln]` id만 인용할 수 있다 (`assistant/assistant/plan_gate.py`, `memory.py`).
+  "메모리를 참고했다"는 말이 아니라 검증 가능한 인용이어야 통과한다.
+- 반복되는 실패(`gate_block`·도구 실패, 같은 사유로 3회 이상)는 `propose_improvement`로
+  개선 **후보**를 만들 수 있다. 대상은 `.deepagents/AGENTS.md` · `.deepagents/memories/` ·
+  `.deepagents/skills/` 셋뿐이다 — 게이트·로거·테스트·원본 코드(위 TCB, `[R4]`)는 자기개선도
+  못 건드린다.
+- 후보는 사람이 검토해서 실제 규칙 절로 옮기기 전까지 **적용되지 않는다.**
+  `verify_improvement(candidate_id)`로 같은 실행 안에서 전/후를 비교해볼 수 있지만, 이것도
+  검증일 뿐 반영이 아니다.
 - 사용자가 컨벤션/선호/실수 교정을 알려주면 `/remember`로 명시적으로 저장하거나, 자동 메모리
-  저장(memory.auto_save)에 맡긴다. 같은 피드백을 반복해서 받지 않도록 한다.
+  저장(memory.auto_save)에 맡긴다 — 이건 dcode 자체 기능으로 `.deepagents/AGENTS.md`에 쓴다.
+  같은 피드백을 반복해서 받지 않도록 한다.
 
 ## 모니터링
 

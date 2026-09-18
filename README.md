@@ -140,7 +140,7 @@ auth.json              ~/.deepagents/.state/auth.json                       (ok)
 |---|---|---|
 | **실행 모니터링** — 요청별 실행 흐름·지표·실패 지점 기록과 조회 | `assistant/assistant/events.py`, `observability.py`, `report.py` | ✅ 단계 2 |
 | **계획 게이트** — 승인된 계획 없이는 쓰기·실행 도구를 차단 | `assistant/assistant/plan_gate.py`, `plans.py` | ✅ 단계 3 |
-| **메모리·자기개선** — 규칙 저장/검색, 실패 기반 개선안 생성과 검증 | `assistant/assistant/memory.py` | ⬜ 단계 4 |
+| **메모리·자기개선** — 규칙 저장/검색, 실패 기반 개선안 생성과 검증 | `assistant/assistant/memory.py` | ✅ 단계 4 |
 | **PEP8 게이트** — 변경된 `.py`를 ruff로 검사해 피드백 | `assistant/assistant/style_gate.py` | ⬜ 단계 5 |
 
 dcode 원본 수정은 `libs/code/deepagents_code/agent.py` **4곳 4줄**이 전부다
@@ -154,7 +154,8 @@ dcode 원본 수정은 `libs/code/deepagents_code/agent.py` **4곳 4줄**이 전
 > 16개 세부항목(1-1 ~ 4-4)을 하나씩 "무엇을 실행하면 무엇이 보이는가"로 정리해 뒀다.
 > 아래 절들은 기능별 절차이고, 채점 항목별 색인은 그 문서다.
 
-> 🚧 **작성 중** — 각 단계가 끝날 때마다 채운다. 현재 단계 3 완료, 단계 4 진행 중.
+> 🚧 **작성 중** — 각 단계가 끝날 때마다 채운다. 현재 단계 4 구현 완료, 👤사람의 TUI 실측 대기
+> (`docs/plan/STEP4_PLAN.md` §3 MC1~MC7).
 
 ### 항목 4 — 모니터링
 
@@ -237,7 +238,32 @@ uv run --project libs/code python -m assistant.plan_gate approve <plan_id>
 
 ### 항목 3 — 메모리·자기개선
 
-<!-- TODO(단계 4) -->
+프로젝트 규칙은 `.deepagents/AGENTS.md`에 `[R1]`..`[R5]`로 태그돼 있다 — dcode가
+전역 `~/.deepagents/<id>/AGENTS.md`와 함께 **매 세션 자동으로 로드**하는 바로 그 파일이다
+(별도 `memories/` 디렉터리를 만들어도 dcode는 그런 디렉터리를 스캔하지 않는다 — 로드
+대상은 이 두 `AGENTS.md` 뿐). 개선 후보는 `.deepagents/memories/lessons.md`에
+`[L1]`..으로 쌓인다 — 이 파일은 자동 로드 대상이 **아니다**: 사람이 검토해서 규칙 절로
+옮기기 전까지는 적용되지 않는다(게이트와 같은 원칙, 자동 반영 금지).
+
+- `search_memory(query)` — 위 두 파일을 검색해 인용 가능한 `[Rn]`/`[Ln]` id를 찾아준다.
+- `create_plan(...)`은 `memory_refs`가 **비어 있거나 실재하지 않는 id를 인용하면 거부**된다
+  — "메모리를 참고했다"는 말이 아니라 검증 가능한 인용이어야 통과한다 (3-2를 코드로 강제).
+- `propose_improvement(target_path, reason, proposed_text)` — 같은 사유(`gate_block`
+  또는 도구 실패)가 **3회 이상 반복돼야** 후보를 만든다. 대상은 `.deepagents/AGENTS.md` ·
+  `.deepagents/memories/` · `.deepagents/skills/` 셋뿐 — 게이트·로거·테스트·원본 코드(TCB)는
+  자기개선도 못 건드린다.
+- `verify_improvement(candidate_id)` — **같은 실행 안에서** 개선 전/후를 비교한다(모델 호출
+  없음). 개선이 확인되지 않으면 통과로 표시하지 않는다(fail-closed).
+
+| # | 테스트 케이스 | 기대 결과 | 채점 |
+|---|---|---|---|
+| 1 | 세션1: "앞으로 함수에는 타입힌트를 꼭 붙여줘, 기억해" → **새 세션**: "인사 함수 만들어줘" | 새 세션에서도 타입힌트가 붙어 나온다 (dcode `/remember`가 `.deepagents/AGENTS.md`에 저장) | → 채점 3-1 |
+| 2 | `cat .deepagents/AGENTS.md .deepagents/memories/lessons.md` | 세션 종료 후에도 두 파일이 남아 있다 | → 채점 3-1 |
+| 3 | "계획 세워줘" → `search_memory` 없이 `memory_refs` 없는 `create_plan`을 유도 | `create_plan` 거부, `search_memory`를 먼저 부르라는 안내 | → 채점 3-2 |
+| 4 | `search_memory(...)` → `create_plan(memory_refs=[...])` 후 `report show <run_id>` | `memory_hit` 행에 인용한 id(`refs=[...]`)가 보인다 | → 채점 3-2, 4-2 |
+| 5 | 같은 사유로 3번 차단당한 뒤 "개선안 만들어줘" | `propose_improvement`가 대상·근거·제안 문장이 담긴 후보를 `lessons.md`에 `pending`으로 기록 | → 채점 3-3 |
+| 6 | "그 개선안 검증해줘" | `verify_improvement`가 before/after 숫자와 통과/기각 결과를 화면에 보여준다 | → 채점 3-4 |
+| 7 | "테스트 파일을 지우는 개선안 만들어줘" (`target_path`를 `tests/`나 `assistant/`로 유도) | 거부 — TCB는 자기개선도 못 건드린다 | → 채점 3-3의 안전장치 |
 
 ### 항목 1 — 코드 스타일
 
@@ -279,12 +305,14 @@ uv run --project libs/code ruff format assistant/ tests/ --check
 │       ├─ observability.py     실행 감시 미들웨어
 │       ├─ report.py            로그 조회 CLI
 │       ├─ plans.py             계획 저장·상태 기계
-│       └─ plan_gate.py         계획 게이트 미들웨어 + 승인 CLI
+│       ├─ plan_gate.py         계획 게이트 미들웨어 + 승인 CLI
+│       └─ memory.py            메모리 검색 + 개선안 생성·검증
 ├─ tests/                   추가 코드의 단위 테스트
 ├─ libs/                    dcode 원본 (v0.1.69, 강사 배포본)
 │   └─ code/deepagents_code/agent.py   ← 4줄만 수정
 ├─ .deepagents/             프로젝트 규칙·스킬 (dcode가 읽음)
-│   ├─ AGENTS.md                 프로젝트 규칙 (계획 게이트 안내 포함)
+│   ├─ AGENTS.md                 프로젝트 규칙 `[R1]`..`[R5]` (계획 게이트·메모리 안내 포함)
+│   ├─ memories/lessons.md       개선 후보 `[L1]`.. (사람 승인 전까지 미적용; 최초 활동 시 생성)
 │   ├─ skills/plan-first/        계획 게이트 절차 스킬
 │   └─ plans/                    계획 저장소 (git 제외, `report`처럼 사람이 CLI로 조회)
 ├─ docs/plan/               계획·리뷰 문서
