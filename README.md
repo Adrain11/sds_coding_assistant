@@ -2,7 +2,7 @@
 
 dcode(v0.1.69)에 **계획 게이트 · 메모리/자기개선 · 실행 모니터링**을 얹은 코딩 어시스턴트.
 
-추가 기능은 전부 `assistant/` 한 곳에 있고, dcode 원본(`libs/`)은 미들웨어 배선 3줄만 수정했다.
+추가 기능은 전부 `assistant/` 한 곳에 있고, dcode 원본(`libs/`)은 **`agent.py` 한 파일에 10줄**만 더했다(미들웨어 배선).
 
 ---
 
@@ -141,10 +141,11 @@ auth.json              ~/.deepagents/.state/auth.json                       (ok)
 | **실행 모니터링** — 요청별 실행 흐름·지표·실패 지점 기록과 조회 | `assistant/assistant/events.py`, `observability.py`, `report.py` | ✅ 단계 2 |
 | **계획 게이트** — 승인된 계획 없이는 쓰기·실행 도구를 차단 | `assistant/assistant/plan_gate.py`, `plans.py` | ✅ 단계 3 |
 | **메모리·자기개선** — 규칙 저장/검색, 실패 기반 개선안 생성과 검증 | `assistant/assistant/memory.py` | ✅ 단계 4 |
-| **PEP8 게이트** — 변경된 `.py`를 ruff로 검사해 피드백 | `assistant/assistant/style_gate.py` | ⬜ 단계 5 |
+| **코드 품질** — PEP8·명명·import·docstring 강제 | 루트 `ruff.toml` (`E`·`F`·`I`·`N`·`D` + `D417`, google convention) | ✅ 단계 5 |
 
-dcode 원본 수정은 `libs/code/deepagents_code/agent.py` **4곳 4줄**이 전부다
-(`EventWriter` 생성 1줄 + 미들웨어 삽입 3줄 — 로거 2곳 + 계획 게이트 1곳).
+dcode 원본 수정은 `libs/code/deepagents_code/agent.py` **한 파일, 10줄 추가**가 전부다
+(import 3줄 + `EventWriter` 생성 1줄 + 미들웨어 삽입 3줄 + 설명 주석 2줄 + 빈 줄 1).
+삽입 지점은 3곳 — 로거(바깥), 계획 게이트, 로거(안쪽). `git diff`로 확인할 수 있다.
 
 ---
 
@@ -154,8 +155,8 @@ dcode 원본 수정은 `libs/code/deepagents_code/agent.py` **4곳 4줄**이 전
 > 16개 세부항목(1-1 ~ 4-4)을 하나씩 "무엇을 실행하면 무엇이 보이는가"로 정리해 뒀다.
 > 아래 절들은 기능별 절차이고, 채점 항목별 색인은 그 문서다.
 
-> 🚧 **작성 중** — 각 단계가 끝날 때마다 채운다. 현재 단계 4 구현 완료, 👤사람의 TUI 실측 대기
-> (`docs/plan/STEP4_PLAN.md` §3 MC1~MC7).
+> ✅ **전부 확인 완료** (2026.09.18) — 항목 1~4의 완료조건을 모두 실측했다.
+> 단계별 실측 기록: [step2_result.md](docs/plan/step2_result.md) · [step3_result.md](docs/plan/step3_result.md) · [step4_result.md](docs/plan/step4_result.md)
 
 ### 항목 4 — 모니터링
 
@@ -267,7 +268,7 @@ uv run --project libs/code python -m assistant.plan_gate approve <plan_id>
 
 ### 항목 1 — 코드 스타일
 
-<!-- TODO(단계 5) -->
+아래 "코드 스타일 (ruff)" 절 참조 — 명령 두 개로 1-1·1-2·1-3을 한 번에 확인한다.
 
 ### 단위 테스트
 

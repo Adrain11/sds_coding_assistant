@@ -16,7 +16,7 @@
 | 1-a — 이식 (skills·설정) | ✅ 완료 (09.17) | `.agents/`, `.claude/`, `.deepagents/`, `SKILLS.md` |
 | **2 — 이벤트 로거** | ✅ **완료 (09.17)** | `assistant/{events,observability,report}.py` · **DC1~DC8 전부 통과** · `step2_result.md` |
 | **3 — 계획 게이트** | ✅ **완료 (09.18)** | `plan_gate.py`·`plans.py` · **EC1~EC9 전부 통과** (👤사람 TUI 실측) · `step3_result.md` |
-| **4 — 메모리·자기개선** | ✅ **완료 (09.18)** | `memory.py` · **MC1~MC7 전부 통과** (같은 세션 실측) · `step4_result.md` |
+| **4 — 메모리·자기개선** | ✅ **완료 (09.18)** | `memory.py` · **MC1~MC7 전부 통과** (👤사람 TUI 실측 — MC1은 규칙을 가르친 뒤 **TUI를 재시작해 새 세션에서** 확인했다) · `step4_result.md` |
 | **5 — PEP8 · README · ZIP** | ✅ **완료 (09.18)** | `ruff.toml` + docstring · 제출 ZIP 빌드·풀어서 검증 · `step5_ruff_docstrings.md` · `step5_zip_verify.md` |
 
 **검증 현황** — 단위 테스트 125개 통과 · `ruff check`/`ruff format --check` clean ·

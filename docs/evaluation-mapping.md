@@ -90,7 +90,7 @@ uv run --project libs/code python -m assistant.plan_gate approve <plan_id>
 
 | 단계 | 계획 | 리뷰 | 반영 기록 | 결과 |
 |---|---|---|---|---|
-| 2 이벤트 로거 | [STEP2_PLAN.md](plan/STEP2_PLAN.md) | [STEP2_REVIEW.md](plan/STEP2_REVIEW.md) | [STEP2_REVIEW_RESPONSE.md](plan/STEP2_REVIEW_RESPONSE.md) | [step2_result.md](plan/step2_result.md) |
+| 2 이벤트 로거 | [STEP2_PLAN.md](plan/STEP2_PLAN.md) | [STEP2_REVIEW.md](plan/STEP2_REVIEW.md) · [SUBMISSION_GAP.md](plan/SUBMISSION_GAP.md) | [INBOX.md](plan/INBOX.md)의 설계 응답 + `STEP2_PLAN.md` 본문의 `🔴 (검토 R2)` 인라인 표시 | [step2_result.md](plan/step2_result.md) |
 | 3 계획 게이트 | [STEP3_PLAN.md](plan/STEP3_PLAN.md) | [STEP3_REVIEW.md](plan/STEP3_REVIEW.md) | [STEP3_REVIEW_RESPONSE.md](plan/STEP3_REVIEW_RESPONSE.md) | [step3_result.md](plan/step3_result.md) |
 | 4 메모리·자기개선 | [STEP4_PLAN.md](plan/STEP4_PLAN.md) | [STEP4_REVIEW.md](plan/STEP4_REVIEW.md) · [STEP4_REVIEW_ADDENDUM.md](plan/STEP4_REVIEW_ADDENDUM.md) · [STEP4_CODE_REVIEW.md](plan/STEP4_CODE_REVIEW.md) | `step4_result.md` §착수 전 확인 (계획 전제 오류를 코드 쓰기 전에 잡아 계획서까지 수정) | [step4_result.md](plan/step4_result.md) |
 | 5 최종 | [PLAN.md](plan/PLAN.md) §단계 5 | — | — | [step5_zip_verify.md](plan/step5_zip_verify.md) · [step5_ruff_docstrings.md](plan/step5_ruff_docstrings.md) |
