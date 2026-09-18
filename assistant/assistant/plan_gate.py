@@ -38,6 +38,7 @@ plan's `target_files` — a plan cannot authorize disabling the plan gate.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import datetime as _dt
 import logging
 import os
@@ -648,7 +649,12 @@ class PlanGateMiddleware(AgentMiddleware):
         `PlanStore`'s own `mkdir`) and appended to in-process by
         `create_plan` — both zero-syscall or one-time-syscall paths — so
         this loop only ever does single-file reads for ids already known,
-        never a listing.
+        never a listing. Those reads are still real blocking I/O, though
+        (Blockbuster's default guard covers plain file `read`/`write`, not
+        only directory scans) — `awrap_tool_call` is what keeps *this*
+        method off the event-loop thread on the async path, by running the
+        whole `_validate_tool_call` call (which reaches this method) inside
+        `asyncio.to_thread`.
         """
         plans: list[Plan] = []
         for plan_id in self._known_plan_ids:
@@ -841,8 +847,23 @@ class PlanGateMiddleware(AgentMiddleware):
         Returns:
             An error `ToolMessage` if blocked, otherwise `handler(request)`'s
             own result.
+
+        검토 A2 (round 2) — `_validate_tool_call` runs directly here rather
+        than through a plain `@tool`'s body, so it gets none of `ToolNode`'s
+        automatic `run_in_executor` thread-pooling. It still does file I/O
+        (`_approved_plans()`'s `store.get()` reads a plan file on the
+        approved path; `_block()`'s `_append_gate_log` appends one on the
+        blocked path), and Blockbuster's default guarded-function set
+        covers plain `read`/`write` on an open file, not just directory
+        scans (`blockbuster/blockbuster.py`'s `io.TextIOWrapper.read`/
+        `.write` entries) — the `glob`/`resolve` removal above was
+        necessary but not sufficient. `asyncio.to_thread` moves the whole
+        synchronous check off the event-loop thread for this async path.
+        The sync path (`wrap_tool_call`) is not an event loop and stays as
+        a direct call.
         """
-        if (rejection := self._validate_tool_call(request)) is not None:
+        rejection = await asyncio.to_thread(self._validate_tool_call, request)
+        if rejection is not None:
             return rejection
         return await handler(request)
 

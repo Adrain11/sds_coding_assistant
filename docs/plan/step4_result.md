@@ -27,9 +27,11 @@ Blockbuster가 블로킹 콜로 잡고 D6(fail-closed)가 차단으로 바꾼다
    (순수 문자열 연산)로 교체했다. `_is_tcb_path`/`_path_in_scope` 둘 다 이 함수를 쓰므로
    게이트의 모든 스코프·TCB 판정이 한 번에 해결됐다. `docstring`이 이미 "never used for
    filesystem access"라고 명시했던 대로, 실제 파일 접근이 필요 없는 자리였다.
-4. **sync 경로 확인** — `wrap_tool_call`(sync)과 `awrap_tool_call`(async)이 같은
-   `_validate_tool_call()`을 호출하는 구조라, 1·2번 수정이 두 경로 모두에 동일하게
-   적용된다(코드 분기 없음 — 애초에 경로에 따라 다르게 동작할 여지가 구조적으로 없다).
+4. **sync 경로 확인** — `wrap_tool_call`(sync)과 `awrap_tool_call`(async)은 같은
+   `_validate_tool_call()`을 호출한다. 1·2번(글롭·`resolve` 제거)은 로직 자체가 바뀐
+   것이라 두 경로 모두에 동일하게 적용됐다. 남은 read/write(아래 "2라운드" 참고)는 로직이
+   아니라 **어느 스레드에서 도는가**의 문제라 두 경로가 원래 달라야 맞다 — sync 경로는
+   이벤트 루프가 아니므로 그대로 두고, async 경로만 `asyncio.to_thread`로 감쌌다.
 5. `test_dotdot_path_still_hits_tcb`(`tests/test_plan_gate.py`) 추가 — `os.path.normpath`가
    `Path.resolve()`와 동일하게 `..`를 접는지 확인한다
    (`.deepagents/skills/../../assistant/assistant/plan_gate.py` → TCB 차단, 존재하지 않는
@@ -44,6 +46,39 @@ Blockbuster가 블로킹 콜로 잡고 D6(fail-closed)가 차단으로 바꾼다
 ```
 uv run --project libs/code pytest tests/ -q
 → 122 passed  (기존 119 + dotdot 1 + no-blocking-io 2)
+```
+
+### A2 2라운드 — glob·resolve는 없앴지만 남은 read/write는 그대로였다
+
+1라운드에서 "글롭·`resolve`가 사라졌다"까지 검증하고 끝냈는데, 🔵검토가 다시 짚었다:
+`_approved_plans()`가 `self._known_plan_ids`의 각 id마다 부르는 `self._store.get(plan_id)`
+(파일 read)와, 차단 시 `_block()` → `_append_gate_log()`의 `gate.log` 파일 write는
+**여전히 남아 있었다.** Blockbuster의 기본 가드 목록(`blockbuster/blockbuster.py`)을 직접
+확인해보니 `io.TextIOWrapper.read`/`.write`가 `os.scandir` 등과 나란히 등록돼 있다 —
+**디렉터리 순회만이 아니라 일반 파일 read/write도 잡는다.** 1라운드의 회귀 테스트
+(`Path.glob`/`iterdir`/`resolve`를 실패하게 patch)는 이 남은 read/write는 전혀 못 잡는
+구멍이었다.
+
+**고친 것** — `awrap_tool_call`(async 경로)만 수정했다:
+
+```python
+rejection = await asyncio.to_thread(self._validate_tool_call, request)
+```
+
+`wrap_tool_call`(sync)은 이벤트 루프가 아니므로 그대로 뒀다(둘 다 같은
+`_validate_tool_call`을 부르므로 분기 없이 자연히 일관됨). 이러면 `_validate_tool_call`
+전체 — 승인 경로의 `store.get()` read든, 차단 경로의 `_append_gate_log` write든 — 가
+async 경로에서 통째로 스레드로 옮겨진다.
+
+**검증** — 이번엔 "그 함수가 안 불린다"가 아니라 "**어느 스레드에서** 불렸는가"를 확인해야
+하므로, `Path.read_text`/`Path.open`을 호출한 스레드를 기록하는 patch로 테스트 2개를
+추가했다(`test_async_approved_path_reads_plan_file_off_event_loop_thread`,
+`test_async_blocked_path_writes_gate_log_off_event_loop_thread`). **수정을 되돌리고
+돌려보면 이 둘이 실패하는 것까지 직접 확인했다** — 회귀를 진짜로 잡는지 검증 후 원복.
+
+```
+uv run --project libs/code pytest tests/ -q
+→ 124 passed  (122 + 스레드 확인 테스트 2개)
 ```
 
 ### 항목 3 — `memory.py`의 `_iter_run_events`는 확인 결과 이미 안전하다 (계획과 다른 결론)
@@ -155,6 +190,9 @@ M4는 "같은 실행 안 OFF/ON, 모델 호출 없음"을 요구했다. 후보�
 지연 임포트 패턴).
 
 ## 단위 테스트
+
+이 절은 A2 수정 **전** 스냅샷이다(항목 1~7 구현 직후). 최종 개수는 위 A2 절의
+**124 passed**다.
 
 ```
 uv run --project libs/code pytest tests/ -q

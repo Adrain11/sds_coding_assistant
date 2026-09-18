@@ -9,6 +9,7 @@ that the returned message looks like a rejection.
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -270,6 +271,74 @@ class TestNoBlockingIOInHotPath:
             )
         handler.assert_not_called()
         assert result.status == "error"
+
+    def test_async_approved_path_reads_plan_file_off_event_loop_thread(
+        self, gate, tmp_path
+    ):
+        """The approved-plan file read must happen off the event-loop thread.
+
+        검토 (round 2) — `glob`/`resolve` are gone, but the remaining
+        single-file `read_text()` (`_approved_plans` -> `store.get()`) is
+        still real blocking I/O. Blockbuster's default guard covers plain
+        file `read`/`write`, not just directory scans, so this must run off
+        the event-loop thread on the async path — proven here by recording
+        which thread actually calls `read_text`, not just checking the
+        call succeeds (a same-thread call would "work" in this test just
+        as well; it just would have crashed for real under Blockbuster).
+        """
+        target = str(tmp_path / "hello.py")
+        _approve_plan(gate, target_files=[target])
+        calling_thread = threading.current_thread()
+        read_threads: list[threading.Thread] = []
+        original_read_text = Path.read_text
+
+        def _tracking_read_text(self_path, *args, **kwargs):
+            read_threads.append(threading.current_thread())
+            return original_read_text(self_path, *args, **kwargs)
+
+        async def handler(_request):
+            return ToolMessage(content="ok", name="x", tool_call_id="call_1")
+
+        handler = MagicMock(side_effect=handler)
+        with patch.object(Path, "read_text", _tracking_read_text):
+            result = asyncio.run(
+                gate.awrap_tool_call(
+                    _request("write_file", {"file_path": target}), handler
+                )
+            )
+        handler.assert_called_once()
+        assert result.content == "ok"
+        assert read_threads, "expected _approved_plans to read the plan file"
+        assert all(t is not calling_thread for t in read_threads)
+
+    def test_async_blocked_path_writes_gate_log_off_event_loop_thread(self, gate):
+        """The blocked-path `gate.log` append must also happen off-thread.
+
+        Same concern as above, for `_block` -> `_append_gate_log`, a plain
+        `Path.open(...).write(...)`.
+        """
+        calling_thread = threading.current_thread()
+        open_threads: list[threading.Thread] = []
+        original_open = Path.open
+
+        def _tracking_open(self_path, *args, **kwargs):
+            open_threads.append(threading.current_thread())
+            return original_open(self_path, *args, **kwargs)
+
+        async def handler(_request):
+            return ToolMessage(content="ok", name="x", tool_call_id="call_1")
+
+        handler = MagicMock(side_effect=handler)
+        with patch.object(Path, "open", _tracking_open):
+            result = asyncio.run(
+                gate.awrap_tool_call(
+                    _request("write_file", {"file_path": "hello.py"}), handler
+                )
+            )
+        handler.assert_not_called()
+        assert result.status == "error"
+        assert open_threads, "expected _append_gate_log to write gate.log"
+        assert all(t is not calling_thread for t in open_threads)
 
 
 class TestFailClosed:
