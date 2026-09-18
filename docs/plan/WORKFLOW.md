@@ -11,61 +11,52 @@
 
 > ⚠️ **단계가 끝날 때마다 이 절을 갱신하고 커밋한다.** 이게 세 환경이 공유하는 유일한 진행 상황판이다.
 
+### ✅ 전 단계 완료 — 남은 것은 제출뿐 (2026.09.18)
+
 | 단계 | 상태 | 산출물 |
 |---|---|---|
 | 0 — TUI 첫 확인 | ✅ 완료 (09.16) | `step0_tui_result.md` |
 | 1 — 소스 vendoring + 빌드 | ✅ 완료 (09.17) | `libs/`, 빌드 통과 |
 | 1-a — 이식 (skills·설정) | ✅ 완료 (09.17) | `.agents/`, `.claude/`, `.deepagents/`, `SKILLS.md` |
-| **2 — 이벤트 로거** | ✅ **완료 (09.17)** | `assistant/{events,observability,report}.py` · **DC1~DC8 전부 통과** · 단위 테스트 40개 · `step2_result.md` |
-| **3 — 계획 게이트** | 🔵 **구현 중** | 계획 `STEP3_PLAN.md` · 리뷰 `STEP3_REVIEW.md` · 반영 `STEP3_REVIEW_RESPONSE.md`(R1~R6 전부 채택) · `plans.py` + 테스트 18개 완료, `plan_gate.py` 작업 중 |
-| 4 — 메모리·자기개선 | ⬜ 계획 미작성 | — |
-| 5 — PEP8 + README + ZIP | ⬜ 상세 계획 미작성 (`PLAN.md` §4에 항목만) | — |
+| **2 — 이벤트 로거** | ✅ **완료 (09.17)** | `assistant/{events,observability,report}.py` · **DC1~DC8 전부 통과** · `step2_result.md` |
+| **3 — 계획 게이트** | ✅ **완료 (09.18)** | `plan_gate.py`·`plans.py` · **EC1~EC9 전부 통과**(👤사람 TUI 실측) · `step3_result.md` |
+| **4 — 메모리·자기개선** | ✅ **완료 (09.18)** | `memory.py` · **MC1~MC7 전부 통과**(같은 세션) · 검토 A1·A2 수정 반영 · `step4_result.md` |
+| **5 — PEP8 + README + ZIP** | ✅ **완료 (09.18)** | `ruff.toml` + docstring · 제출 ZIP 빌드·풀어서 검증 2회 · `step5_ruff_docstrings.md` · `step5_zip_verify.md` |
 
-### ⏰ 일정 — **실제 작업 가능일은 09.18(금)까지다**
+**검증 현황** — 단위 테스트 125개 통과 · `ruff check`/`ruff format --check` clean ·
+제출 ZIP(22MB)을 새 디렉터리에 풀어 README만 보고 빌드·실행·테스트까지 재현 완료.
 
-제출 마감은 **2026.09.20(일) 23:59:59**지만, 교육 환경(WSL·검토 계정)을 쓸 수 있는 건
-수강기간이 끝나는 **09.18(금)까지**다. 내일 하루에 남은 것을 다 할 수는 없다.
+**채점 항목별 확인 방법은 [`docs/evaluation-mapping.md`](../evaluation-mapping.md)에 있다** —
+16개 세부항목(1-1 ~ 4-4)을 "무엇을 실행하면 무엇이 보이는가"로 정리한 색인이다.
 
-**점수 대비 순서 — 위에서부터 한다**
+### 리뷰에서 잡아 고친 것 (채점 2-3의 증거)
 
-| | 무엇 | 예상 | 왜 이 순서인가 |
-|---|---|---|---|
-| **1** | **ZIP 패키징 + 풀어서 빌드·실행 검증** (`PLAN.md` 단계 5의 5번) | 1.5h | 채점자가 빌드에서 막히면 **나머지 30점이 채점 자체가 안 된다.** 보험이 먼저다 |
-| **2** | **ruff 설정 + `assistant/` docstring** (항목 1, 10점) | 1h | `pyproject.toml` 몇 줄 + 주석. **시간 대비 가장 싸다** |
-| **3** | **단계 3 계획 게이트** (항목 2, 10점) | 4h | 계획·리뷰가 끝나 있어 코딩만 남았다 |
-| 4 | 단계 4 메모리 (항목 3, 10점) | — | 시간이 남으면 3-1·3-2만 얕게 |
-
-### 단계 2 완료조건 — 전부 통과 (09.17)
-
-| | 확인자 | 결과 |
+| | 무엇 | 결과 |
 |---|---|---|
-| DC1 프로젝트 루트 · DC2 이벤트 흐름 · DC5 fail-open(①②) · DC6 화면 오염 없음 | 👤 사람 (TUI 실측) | ✅ |
-| DC3 타임라인 · DC4 실패 지점 · DC7 재시도 지표 · DC8 계층형 trace | 👤 사람 (`report` CLI) | ✅ |
+| 단계 2 R1~R4·C1~C6 | 재시도가 안 잡히는 구조(R2) 등 | 전부 반영 — `STEP2_REVIEW_RESPONSE.md` |
+| 단계 3 R1~R6 | `delete`·`task` 차단 누락, `allow_shell` 제거 | **6건 전부 채택** — `STEP3_REVIEW_RESPONSE.md` |
+| 단계 4 A1 | `verify_improvement`의 before/after가 감소 불가였다 | 후보 승격 시뮬레이션으로 교체 (`968e6bc`) |
+| 단계 4 A2 | 게이트 핫패스의 blocking I/O → 승인된 계획도 차단됨(S18) | 순회 제거 + `normpath` + `to_thread` (`7d166f2`, `40ab1df`) |
+| 단계 5 | ZIP `git archive` pathspec이 `docs/evaluation-mapping.md`를 빠뜨렸다 | pathspec을 `docs` 전체로 (`da68143`, `599bff0`) |
 
-**남은 결함 1건** — `tool_end`에 에러 *내용*이 안 담긴다. 실패 지점은 보이는데 **원인**이 안 보여
-채점 4-4가 온전치 않다. INBOX에 기록돼 있다.
+### 📋 제출 체크리스트
 
-**지금 열려 있는 것**
-- 🟢 구현: 단계 3 `plan_gate.py` 작업 중. 그 뒤 INBOX의 `report.py` 검토·N1~N9·P4
-- 🟣 설계: 단계 4 계획 (09.18 오전)
-- 👤 사람: 강사 확인 — `docs/`를 ZIP에 포함해도 되는지 (`submission_gap.md` G1)
-- 🔵 검토: R4 PyPI `assistant` 이름 확인. **구현과 계정을 공유하므로 구현이 도는 동안은 쉰다**
+**ZIP 빌드** — 저장소 루트에서:
 
-### 📌 단계 5로 이월
+```bash
+git archive --format=zip --output=/tmp/sds_coding_assistant_submit.zip HEAD --   README.md docs .deepagents assistant tests libs .env.example ruff.toml
+```
 
-| | 무엇 | 왜 |
-|---|---|---|
-| **X3** | **ZIP을 풀어서 검증한다 — clone이 아니다.** 단계 5의 **첫** 작업 | `.claude/`·`.agents/`·`.git/` 등을 ZIP에서 빼므로 clone 검증은 "뺀 파일에 의존하는 문제"를 못 잡는다 |
-| N1 | `docs/evaluation-mapping.md` — 채점 16개 세부항목 ↔ 확인 방법 매핑. README 6절을 채점 항목 번호로 재구성 | 기능을 다 만들어도 채점자가 못 찾으면 0점 |
-| N8 | README 용어를 "저장소 루트" → **"압축을 푼 폴더의 최상위"**로 | 제출이 ZIP이고 `.git/`은 제외 |
-| N9 | README 항목 2에 **"auto 모드에서도 차단된다"** 테스트 케이스 | 채점 2-4의 강한 증거 (`step0_tui_result.md` ③) |
+| | |
+|---|---|
+| 기한 | **2026.09.20(일) 23:59:59** |
+| 형식 | ZIP 파일 (GitHub 링크 아님) |
+| 닉네임 | **Adrian** — 성함 금지 |
+| 포함 | `README.md` · `docs/` · `.deepagents/` · `assistant/` · `tests/` · `libs/`(전체) · `.env.example` · `ruff.toml` |
+| 제외 | `.claude/` · `.agents/` · `CLAUDE.md` · `SKILLS.md` · `skills-lock.json` · `.git/` · `runs/` · `.venv/` |
 
-**제출 기한** 2026.09.20(일) 23:59:59 · **형식** ZIP (GitHub 링크 아님) · **닉네임** 제출, 성함 금지
-
-> 🔴 **ZIP에는 "dcode 실행에 필요한 소스코드만"** 넣는다. 안내문이 `.claude/skills` 등을 명시적으로 금지했다.
-> 제외 목록은 `STEP2_PLAN.md` §0-B 참조. 저장소에는 그대로 두고, **ZIP 만들 때** 뺀다.
-
----
+> 🔴 `pathspec`은 `docs/plan`이 아니라 **`docs`**다. 좁히면 `docs/` 바로 밑의 문서가 빠진다 —
+> 실제로 `evaluation-mapping.md`가 그렇게 빠졌고 ZIP 재검증에서만 잡혔다 (`step5_zip_verify.md` §7).
 
 ## 1. 세 환경의 역할
 
