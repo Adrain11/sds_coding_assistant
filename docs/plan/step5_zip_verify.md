@@ -116,6 +116,60 @@ uv run --project libs/code ruff format assistant/ tests/ --check   # ✅ 11 file
 ruff.toml tests` — 지시된 제외 목록(`.claude`·`.agents`·`CLAUDE.md`·`SKILLS.md`·
 `skills-lock.json`·`.git`) 전부 없음, 지시된 포함 목록 전부 있음.
 
+## 7. 단계 4(메모리·자기개선) 이후 재검증 (2026.09.18)
+
+단계 4에서 `assistant/memory.py`·`tests/test_memory.py`가 새로 생기고, `docs/plan/`에
+`STEP4_PLAN.md`·`STEP4_REVIEW.md`·`STEP4_REVIEW_ADDENDUM.md`·`STEP4_CODE_REVIEW.md`가
+쌓였고, `docs/evaluation-mapping.md`가 새로 생겼다(§6 이후, N1 작업). ZIP을 다시 만들어
+**또 새 디렉터리**(`~/zip_verify/` 재생성)에 풀고 §2·§4·§6 전체를 반복했다.
+
+### 🔴 재검증에서만 잡히는 버그 1건 — `git archive` 목록이 새 문서를 놓쳤다
+
+지금까지 쓴 `git archive` pathspec은 `docs/plan`만 넣었다. 그런데 `docs/evaluation-mapping.md`는
+`docs/plan/` **밖**(`docs/evaluation-mapping.md`, `docs/plan/` 형제)에 있다 — README §6이
+"📋 채점 항목별로 찾으려면 → `docs/evaluation-mapping.md`"로 링크하는 바로 그 파일인데,
+**기존 pathspec으로 만든 ZIP에는 아예 없었다.** clone 검증이었으면 안 잡혔을 것이다
+(clone에는 `docs/` 전체가 있으니까) — X3가 경고한 정확한 실패 유형이 이번엔 `docs/plan`
+바깥의 파일에서 재발했다.
+
+**고침** — pathspec에 `docs/evaluation-mapping.md`를 명시적으로 추가했다:
+
+```bash
+git archive --format=zip --output=/tmp/sds_coding_assistant_submit.zip HEAD -- \
+  README.md docs/plan docs/evaluation-mapping.md .deepagents assistant tests libs \
+  .env.example ruff.toml
+```
+
+`docs/` 밑에 `docs/plan/` 밖의 파일이 이거 하나뿐인지 확인했다
+(`git ls-tree -r HEAD --name-only docs/ | grep -v '^docs/plan/'` → `docs/evaluation-mapping.md` 1건).
+앞으로 `docs/` 바로 밑에 새 문서가 또 생기면 같은 문제가 재발한다 — **제출 전 마지막 점검에서
+이 grep을 다시 돌려 목록과 대조할 것.**
+
+### 재현 절차와 결과 — 전부 통과
+
+```bash
+cd ~/zip_verify   # 완전히 새 디렉터리, 재생성
+uv sync --project libs/code --extra all-providers              # ✅
+uv run --project libs/code dcode --version                      # ✅ deepagents-code 0.1.69
+uv run --project libs/code dcode config path                    # ✅ project hooks.json이 새 디렉터리를 가리킴
+uv sync --project libs/code --extra all-providers --group test  # ✅
+uv run --project libs/code pytest tests/ -q                     # ✅ 125 passed
+uv run --project libs/code ruff check assistant/ tests/          # ✅ All checks passed!
+uv run --project libs/code ruff format assistant/ tests/ --check # ✅ 13 files already formatted
+```
+
+`sds-assistant==0.1.0 (from file:///home/ubuntu/zip_verify/assistant)` — 로컬 editable
+의존성이 이번에도 새 경로에서 정상 해석됐다(§2와 동일 확인). `libs/partners/`
+(`daytona`·`modal`·`quickjs`·`runloop`·`vercel`)도 전부 있음을 다시 확인했다.
+
+125개는 이 저장소(원본)에서 돌린 개수와 **정확히 일치**한다 — 단계 4의 `test_memory.py`(24개)
++ 이전 회차 대비 늘어난 `test_plan_gate.py`/`test_report.py` 회귀 테스트까지 ZIP 사본에서도
+그대로 재현된다.
+
+최종 ZIP: **22MB**, 최상위 항목 `.deepagents .env.example README.md assistant docs libs
+ruff.toml tests` — 지시된 제외 목록(`.claude`·`.agents`·`CLAUDE.md`·`SKILLS.md`·
+`skills-lock.json`·`.git`) 전부 없음, 포함 목록 전부 있음(이번엔 `docs/evaluation-mapping.md`까지).
+
 ## 5. 결정 사항 (기록)
 
 - **`uv.lock`은 ZIP에 안 넣는다.** 지시된 포함 목록에 없었고, 이번 검증에서 lock 없이도
